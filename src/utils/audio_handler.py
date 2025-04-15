@@ -1,3 +1,4 @@
+import traceback
 import pyaudio
 import wave
 import numpy as np
@@ -11,477 +12,188 @@ import io
 import os
 import math # Added for RMS calculation
 
-#========TODO: add energy check for silent audio and for shouting. 30 for whispers, 100 for normal speech, 200 for shouting
-# shall be added to the config file and implemented in this way
+from .audio_player import AudioPlayer
+from .interrupt_detector import InterruptDetector
+
 class AudioHandler:
-    def __init__(self, sample_rate=44100, channels=1, chunk=1024, config=None):
-        self.sample_rate = sample_rate
-        self.channels = channels
-        self.chunk = chunk
-        self.format = pyaudio.paInt16
-        self.pyaudio = pyaudio.PyAudio()
-        self.recognizer = sr.Recognizer()
-        
-        # Audio validation parameters
+    def __init__(self, config=None):
         self.config = config or {}
         self.audio_validation = self.config.get('audio_validation', {})
-        self.min_duration = self.audio_validation.get('min_duration')
-        self.min_file_size = self.audio_validation.get('min_file_size')
-        self.max_retries = self.audio_validation.get('max_retries')
-        self.timeout = self.audio_validation.get('timeout')
-        self.min_energy = self.audio_validation.get('min_energy')
-        self.max_phrase_duration = self.audio_validation.get('max_phrase_duration')  # Default 5 minutes
-        self.vad_energy_threshold = self.audio_validation.get('vad_energy_threshold', 300) # Configurable VAD threshold
-        self.vad_activation_chunks = self.audio_validation.get('vad_activation_chunks', 3) # Chunks needed to trigger VAD
-
-        # Recognizer parameters
         self.recognizer_config = self.config.get('recognizer', {})
-        self.recognizer.pause_threshold = self.recognizer_config.get('pause_threshold')
-        self.recognizer.phrase_threshold = self.recognizer_config.get('phrase_threshold')
-        self.recognizer.non_speaking_duration = self.recognizer_config.get('non_speaking_duration')
-        self.recognizer.energy_threshold = self.recognizer_config.get('energy_threshold')
-        self.recognizer.dynamic_energy_threshold = self.recognizer_config.get('dynamic_energy_threshold')
-        
-        # Audio playback queue and thread
-        self.audio_queue = queue.Queue(maxsize=100)
-        self.playback_thread = None
-        self.is_playing = False
-        self.should_stop_playback = threading.Event()
-        
-        # Interrupt Listener components
-        self.interrupt_listener_thread = None
-        self.should_stop_interrupt_listener = threading.Event()
-        self._interrupt_event_ref = None # To store the event passed by the caller
-        
-        # Track total audio duration for dynamic timeout calculation
-        self.total_audio_duration = 0.0
-        self.last_audio_timestamp = 0.0
-        
+
+        # --- PyAudio Instance (Centralized) ---
+        self.pyaudio_instance = pyaudio.PyAudio()
+
+        # --- Player Component ---
+        player_config = {
+            'default_sample_rate': self.config.get('tts_sample_rate', 22050) # Example config key
+        }
+        self.player = AudioPlayer(self.pyaudio_instance, default_sample_rate=player_config['default_sample_rate'])
+
+        # --- Interrupt Detector Component ---
+        detector_config = {
+            'sample_rate': self.config.get('sample_rate', 44100),
+            'channels': self.config.get('channels', 1),
+            'chunk': self.config.get('chunk', 1024),
+            'vad_energy_threshold': self.audio_validation.get('vad_energy_threshold', 300),
+            'vad_activation_chunks': self.audio_validation.get('vad_activation_chunks', 3)
+        }
+        self.detector = InterruptDetector(self.pyaudio_instance, detector_config)
+
+        # --- Speech Recognition Component (Remains in AudioHandler) ---
+        self.recognizer = sr.Recognizer()
+        self.recognizer.pause_threshold = self.recognizer_config.get('pause_threshold', 1.5)
+        self.recognizer.phrase_threshold = self.recognizer_config.get('phrase_threshold', 0.3)
+        self.recognizer.non_speaking_duration = self.recognizer_config.get('non_speaking_duration', 1.0)
+        self.recognizer.energy_threshold = self.recognizer_config.get('energy_threshold') # Let sr handle default if None
+        self.recognizer.dynamic_energy_threshold = self.recognizer_config.get('dynamic_energy_threshold', True)
+
+        # Parameters used directly by listen_for_speech
+        self.max_retries = self.audio_validation.get('max_retries', 3)
+        self.min_energy = self.audio_validation.get('min_energy', 100) # Provide a default min energy
+        self.max_phrase_duration = self.audio_validation.get('max_phrase_duration', 300) # 5 minutes default
+
+    # --- Property for Playback Status ---
+    @property
+    def is_playing(self):
+        return self.player.is_playing
+
+    # --- Core Listening Method ---
     def listen_for_speech(self, filename="prompt.wav", timeout=None, stop_playback=False):
-        # Stop any ongoing playback if requested
         if stop_playback:
             try:
                 self.stop_playback()
-                # Wait for playback to complete, using a minimal timeout since we're stopping it anyway
-                self.wait_for_playback_complete(timeout=2.0)
+                self.player.wait_for_playback_complete(timeout=1.0)
             except Exception as e:
-                print(f"Error stopping playback: {e}")
-        
+                print(f"Error stopping playback before listen: {e}")
+
         print("Listening for speech...")
-        
-        # Set parameters for better speech detection
         original_pause_threshold = self.recognizer.pause_threshold
         original_phrase_threshold = self.recognizer.phrase_threshold
         original_non_speaking_duration = self.recognizer.non_speaking_duration
-        
+
         try:
-            # Use balanced settings that won't cut off too early or wait too long
-            self.recognizer.pause_threshold = 1.5      # Wait 1.5 seconds of silence before ending (balanced)
-            self.recognizer.phrase_threshold = 0.3     # Detect speech relatively quickly
-            self.recognizer.non_speaking_duration = 1.0  # Keep some silence but not too much
-            
+            # Temporarily adjust settings for potentially better capture during listen
+            self.recognizer.pause_threshold = self.recognizer_config.get('listen_pause_threshold', 1.5)
+            self.recognizer.phrase_threshold = self.recognizer_config.get('listen_phrase_threshold', 0.3)
+            self.recognizer.non_speaking_duration = self.recognizer_config.get('listen_non_speaking_duration', 1.0)
+
             retry_count = 0
-            
             while retry_count <= self.max_retries:
                 try:
-                    with sr.Microphone() as source:
-                        # Adjust for ambient noise with a longer duration for first attempt
+                    # Use the VAD sample rate for the microphone to ensure compatibility
+                    with sr.Microphone(sample_rate=self.detector.vad_sample_rate) as source:
                         duration = 1.0 if retry_count == 0 else 0.5
+                        print(f"Adjusting for ambient noise ({duration}s)...")
                         self.recognizer.adjust_for_ambient_noise(source, duration=duration)
-                        
-                        # Listen for speech with proper timeout
-                        print(f"Listening with timeout={timeout if timeout else 5} seconds...")
+                        print(f"Ambient energy threshold set to: {self.recognizer.energy_threshold:.2f}")
+
+                        print(f"Listening with timeout={timeout if timeout else 5} seconds, phrase limit={self.max_phrase_duration}s...")
                         audio_data = self.recognizer.listen(
-                            source, 
-                            timeout=timeout if timeout else 5,  # Default timeout to prevent hanging
-                            phrase_time_limit=self.max_phrase_duration  # Use configurable max duration
+                            source,
+                            timeout=timeout if timeout else 5,
+                            phrase_time_limit=self.max_phrase_duration
                         )
-                        
-                        # Before saving the file, check if we actually got meaningful audio
-                        audio_duration = len(audio_data.frame_data) / (2 * 16000)
-                        audio_energy = self.recognizer.energy_threshold
-                        
-                        print(f"Listening finished: Duration={audio_duration:.2f}s, Energy={audio_energy:.2f}")
-                        
-                        # ====== ENERGY CHECK ====== can be used for future checks of whether whispering or shouting
-                        if audio_energy < self.min_energy: 
-                            print(f"Warning: Very low energy audio detected (Energy={audio_energy:.2f}.")
-                            # This is likely silence or background noise, treat as timeout
-                            if retry_count < self.max_retries:
-                                print(f"Retrying listen due to low energy (attempt {retry_count+1}/{self.max_retries})...")
+
+                        # Use adjusted energy threshold for the check
+                        current_energy_threshold = self.recognizer.energy_threshold
+                        print(f"Listening finished. Energy Threshold during listen: {current_energy_threshold:.2f}")
+
+                        if current_energy_threshold < self.min_energy: # Check against configured minimum required energy
+                           print(f"Warning: Ambient noise level ({current_energy_threshold:.2f}) might be too low or recording failed. Energy lower than required min_energy ({self.min_energy}).")
+                           if retry_count < self.max_retries:
+                                print(f"Retrying listen due to low ambient energy (attempt {retry_count + 1}/{self.max_retries})...")
                                 retry_count += 1
+                                time.sleep(0.5) # Small delay before retry
                                 continue
-                            else:
-                                return "low_energy"  # Treat as timeout error
-                        
-                        # Only save the file if we've passed all validation checks
+                           else:
+                                return "low_energy"
+
+                        # Save the audio file
                         wav_filename = filename if filename.endswith('.wav') else f"{filename}.wav"
-                        with open(wav_filename, "wb") as f:
+                        filepath = os.path.abspath(wav_filename)
+                        print(f"Saving audio to {filepath}...")
+                        with open(filepath, "wb") as f:
                             f.write(audio_data.get_wav_data())
-                        
-                        print(f"Audio saved as {wav_filename}")
-                        return wav_filename
-    
+                        print(f"Audio saved successfully.")
+                        return filepath
+
+                except sr.WaitTimeoutError:
+                     print("No speech detected within the timeout period.")
+                     if retry_count < self.max_retries:
+                         print(f"Retrying listen (attempt {retry_count + 1}/{self.max_retries})...")
+                         retry_count += 1
+                         continue
+                     else:
+                         return "TIMEOUT_ERROR"
+
                 except Exception as e:
-                    print(f"Unexpected error during listening: {type(e).__name__}: {e}")
-                    import traceback
+                    print(f"Unexpected error during listening attempt: {type(e).__name__}: {e}")
                     traceback.print_exc()
                     if retry_count < self.max_retries:
-                        print(f"Retrying listen due to error (attempt {retry_count+1}/{self.max_retries})...")
+                        print(f"Retrying listen due to error (attempt {retry_count + 1}/{self.max_retries})...")
                         retry_count += 1
+                        time.sleep(1) # Longer delay after error
                         continue
-                    return None
-                    
+                    return None # General error after retries
+
             print("Maximum retries exceeded. No valid speech detected.")
-            return None
-            
+            return "TIMEOUT_ERROR" # Return timeout error after max retries
+
         except Exception as e:
-            print(f"Error during listening: {e}")
-            import traceback
+            print(f"Error setting up microphone or during listen: {e}")
             traceback.print_exc()
             return None
         finally:
-            # Restore original parameters
+            # Restore original recognizer settings
             self.recognizer.pause_threshold = original_pause_threshold
             self.recognizer.phrase_threshold = original_phrase_threshold
             self.recognizer.non_speaking_duration = original_non_speaking_duration
+            print("Listening session ended.")
 
-    def play_audio(self, audio_data, sample_rate=22050):
-        """Play audio data through speakers.
-        
-        Args:
-            audio_data (numpy.ndarray or torch.Tensor): Audio data as numpy array or PyTorch tensor
-            sample_rate (int): Sample rate of the audio data
-        """
-        # Convert PyTorch tensor to numpy array if needed
-        if hasattr(audio_data, 'detach') and hasattr(audio_data, 'cpu') and hasattr(audio_data, 'numpy'):
-            # This is likely a PyTorch tensor
-            audio_data = audio_data.detach().cpu().numpy()
-        
-        # Ensure audio data is float32 and normalized
-        if audio_data.dtype != np.float32:
-            audio_data = audio_data.astype(np.float32)
-        
-        # Normalize if needed
-        if np.max(np.abs(audio_data)) > 1.0:
-            audio_data = audio_data / np.max(np.abs(audio_data))
-        
-        # Calculate audio duration in seconds
-        audio_duration = len(audio_data) / sample_rate
-        
-        # Update total audio duration for timeout calculations
-        self.total_audio_duration += audio_duration
-        self.last_audio_timestamp = time.time()
-        
-        # # Log audio duration for debugging
-        # print(f"Adding audio segment: {audio_duration:.2f}s, total buffered: {self.total_audio_duration:.2f}s")
-        
-        # Start the playback thread if it's not already running
-        self.start_playback_thread(sample_rate)
-        
-        # Add audio to the queue
-        self.audio_queue.put((audio_data, sample_rate))
-        self.is_playing = True
-        
+    # --- Delegated Methods ---
+
+    def play_audio(self, audio_data, sample_rate=None):
+        """Delegate audio playback to the AudioPlayer."""
+        self.player.play_audio(audio_data, sample_rate)
+
     def wait_for_playback_complete(self, timeout=None):
-        """Wait until all audio playback has completed.
-        
-        Args:
-            timeout (float, optional): Maximum time to wait in seconds. If None, calculated dynamically.
-            
-        Returns:
-            bool: True if playback completed, False if timed out
-        """
-        if not self.is_playing and self.audio_queue.empty():
-            # Nothing is playing, reset tracking variables
-            self.total_audio_duration = 0.0
-            return True
-        
-        # Calculate dynamic timeout if not provided
-        if timeout is None:
-            # Base timeout on total audio duration plus buffer
-            # Formula: audio_duration * 1.5 + 2.0 seconds (min 5 seconds, max 60 seconds)
-            timeout = min(max(self.total_audio_duration * 1.5 + 2.0, 5.0), 60.0)
-            
-        # Log the calculated timeout    
-        print(f"Waiting for audio playback to complete (timeout: {timeout:.1f}s, audio duration: {self.total_audio_duration:.1f}s)...")
-        
-        start_time = time.time()
-        
-        # More aggressive approach to waiting for playback to complete:
-        # 1. First wait for the queue to be empty
-        while not self.audio_queue.empty() and time.time() - start_time < timeout:
-            time.sleep(0.2)
-            
-        # 2. Then wait for the is_playing flag to go to False
-        # This handles the case where the queue is empty but the last chunk is still playing
-        while self.is_playing and time.time() - start_time < timeout:
-            time.sleep(0.3)
-            
-        # 3. Add a guaranteed buffer wait time to ensure audio has completely finished
-        # This handles the case where threads might not have properly updated the is_playing flag
-        # Use shorter buffer for short audio, longer for longer audio
-        buffer_wait = min(1.0, self.total_audio_duration * 0.1)
-        print(f"Adding buffer wait of {buffer_wait:.1f} seconds to ensure playback is complete...")
-        time.sleep(buffer_wait)
-            
-        if time.time() - start_time >= timeout:
-            print(f"Warning: Timed out waiting for audio playback to complete after {timeout:.1f}s")
-            self.stop_playback()
-            # Even after forcing stop, wait a moment to ensure resources are released
-            time.sleep(0.5)
-            # Reset tracking variables
-            self.total_audio_duration = 0.0
-            return False
-        
-        self.is_playing = False  # Ensure flag is reset
-        
-        # Reset tracking variables after successful playback
-        self.total_audio_duration = 0.0
-        return True
-
-    def start_playback_thread(self, sample_rate):
-        """Start the background playback thread if it's not already running."""
-        if self.playback_thread is None or not self.playback_thread.is_alive():
-            self.should_stop_playback.clear()
-            self.playback_thread = threading.Thread(
-                target=self._audio_playback_thread,
-                daemon=True
-            )
-            self.playback_thread.start()
-    
-    def stop_playback(self):
-        """Improved playback stopping with buffer clearing and interrupt listener stop"""
-        # Stop interrupt listener first if active
-        self.stop_interrupt_listener()
-
-        if self.is_playing:
-            self.should_stop_playback.set()
-            
-            # Clear queue but allow current chunk to finish
-            while not self.audio_queue.empty():
-                try:
-                    self.audio_queue.get_nowait()
-                    self.audio_queue.task_done()
-                except queue.Empty:
-                    break
-                    
-            # Add a short silence to flush the audio buffer
-            try:
-                self.audio_queue.put((np.zeros(int(0.1*24000)), 24000))
-            except:
-                pass
-                
-            # Wait a short time for playback to complete
-            time.sleep(0.1)
-                
-            self.is_playing = False
-            
-            # Reset duration tracking when stopping playback
-            self.total_audio_duration = 0.0
-
-    def _audio_playback_thread(self):
-        """Background thread that plays audio fragments as they become available."""
-        stream = None
-        try:
-            while not self.should_stop_playback.is_set():
-                try:
-                    # Get audio from queue with a timeout
-                    audio_data, sample_rate = self.audio_queue.get(timeout=0.5)
-                    
-                    # Set playing flag to true
-                    self.is_playing = True
-                    
-                    # Check if we should stop
-                    if self.should_stop_playback.is_set():
-                        self.audio_queue.task_done()
-                        break
-                    
-                    # Create or recreate stream if needed
-                    if stream is None:
-                        stream = self.pyaudio.open(
-                            format=pyaudio.paFloat32,
-                            channels=1,
-                            rate=sample_rate,
-                            output=True
-                        )
-                    
-                    # Calculate approximate playback time for this chunk
-                    playback_duration = len(audio_data) / sample_rate
-                    playback_start = time.time()
-                    
-                    # Play audio
-                    try:
-                        stream.write(audio_data.tobytes())
-                        # Update tracking - subtract the duration of audio just played
-                        self.total_audio_duration = max(0.0, self.total_audio_duration - playback_duration)
-                    except Exception as e:
-                        print(f"Error writing to audio stream: {e}")
-                    finally:
-                        self.audio_queue.task_done()
-                        
-                        # Log actual playback time vs expected
-                        actual_duration = time.time() - playback_start
-                        if abs(actual_duration - playback_duration) > 0.2:  # Only log if significantly different
-                            print(f"Audio timing: expected={playback_duration:.2f}s, actual={actual_duration:.2f}s")
-                    
-                except queue.Empty:
-                    # No audio in queue, set playing flag to false if queue is empty
-                    if self.audio_queue.empty():
-                        self.is_playing = False
-                        # Reset duration tracking when queue is emptied
-                        if self.total_audio_duration > 0.1:  # Only reset if there's significant remaining duration
-                            print(f"Queue emptied with {self.total_audio_duration:.2f}s of tracked audio remaining, resetting")
-                            self.total_audio_duration = 0.0
-                    continue
-                except Exception as e:
-                    print(f"Error in audio playback thread: {e}")
-                    if self.audio_queue.unfinished_tasks > 0:
-                        try:
-                            self.audio_queue.task_done()
-                        except:
-                            pass
-        finally:
-            # Clean up
-            if stream is not None:
-                try:
-                    stream.stop_stream()
-                    stream.close()
-                except Exception as e:
-                    print(f"Error closing audio stream: {e}")
-            self.is_playing = False
-            self.total_audio_duration = 0.0  # Reset duration tracking
-            # Ensure interrupt listener is stopped when playback finishes naturally
-            self.stop_interrupt_listener()
-
-
-    # --- Interrupt Listener Methods ---
-
-    def _calculate_rms(self, data):
-        """Calculate Root Mean Square of audio data."""
-        # Assuming data is numpy array of integers (int16)
-        if data.dtype != np.int16:
-             # Attempt conversion if possible, otherwise return low energy
-             try:
-                 data = data.astype(np.int16)
-             except ValueError:
-                 print("Warning: Could not convert audio data to int16 for RMS calculation.")
-                 return 0
-
-        # Ensure data is not empty
-        if data.size == 0:
-            return 0
-
-        # Calculate RMS
-        rms = math.sqrt(np.mean(np.square(data, dtype=np.float64))) # Use float64 for intermediate calculation
-        return rms
-
-    def _interrupt_listener_run(self):
-        """Background thread to listen for user interruption via VAD."""
-        print("Interrupt listener started.")
-        stream = None
-        active_chunks = 0
-        try:
-            stream = self.pyaudio.open(format=self.format,
-                                       channels=self.channels,
-                                       rate=self.sample_rate,
-                                       input=True,
-                                       frames_per_buffer=self.chunk)
-
-            while not self.should_stop_interrupt_listener.is_set():
-                try:
-                    # Read chunk with a small timeout to allow checking the stop event
-                    data = stream.read(self.chunk, exception_on_overflow=False)
-                    audio_chunk = np.frombuffer(data, dtype=np.int16)
-
-                    # Calculate energy (RMS)
-                    rms = self._calculate_rms(audio_chunk)
-                    # print(f"RMS: {rms:.2f}") # DEBUG: Uncomment to see RMS values
-
-                    if rms > self.vad_energy_threshold:
-                        active_chunks += 1
-                    else:
-                        active_chunks = 0 # Reset if energy drops
-
-                    # Check if activation threshold is met
-                    if active_chunks >= self.vad_activation_chunks:
-                        print(f"Interrupt detected! (RMS: {rms:.2f} > Threshold: {self.vad_energy_threshold} for {active_chunks} chunks)")
-                        if self._interrupt_event_ref:
-                            self._interrupt_event_ref.set() # Signal the main thread/caller
-                        # Once detected, we can stop listening
-                        self.should_stop_interrupt_listener.set() # Signal self to stop
-                        break # Exit loop
-
-                except IOError as e:
-                    if e.errno == pyaudio.paInputOverflowed:
-                        print("Input overflowed. Skipping.")
-                    else:
-                        print(f"IOError in interrupt listener: {e}")
-                        time.sleep(0.1) # Avoid busy-waiting on error
-                except Exception as e:
-                    print(f"Error in interrupt listener: {e}")
-                    time.sleep(0.1) # Avoid busy-waiting on error
-
-        finally:
-            if stream is not None:
-                try:
-                    stream.stop_stream()
-                    stream.close()
-                except Exception as e:
-                    print(f"Error closing interrupt listener stream: {e}")
-            print("Interrupt listener stopped.")
-
+        """Delegate waiting for playback to the AudioPlayer."""
+        return self.player.wait_for_playback_complete(timeout)
 
     def start_interrupt_listener(self, interrupt_event):
-        """Starts the VAD interrupt listener thread."""
-        if self.interrupt_listener_thread is None or not self.interrupt_listener_thread.is_alive():
-            self.should_stop_interrupt_listener.clear()
-            self._interrupt_event_ref = interrupt_event # Store reference to the event
-            self.interrupt_listener_thread = threading.Thread(
-                target=self._interrupt_listener_run,
-                daemon=True
-            )
-            self.interrupt_listener_thread.start()
-        else:
-            print("Interrupt listener already running.")
-
+        """Delegate starting the interrupt listener to the InterruptDetector."""
+        self.detector.start_interrupt_listener(interrupt_event)
 
     def stop_interrupt_listener(self):
-        """Stops the VAD interrupt listener thread."""
-        if self.interrupt_listener_thread and self.interrupt_listener_thread.is_alive():
-            self.should_stop_interrupt_listener.set()
-            # Don't wait indefinitely, just signal
-            # self.interrupt_listener_thread.join(timeout=0.5) # Optional: wait briefly
-            self.interrupt_listener_thread = None # Clear the thread reference
-            self._interrupt_event_ref = None
+        """Delegate stopping the interrupt listener to the InterruptDetector."""
+        self.detector.stop_interrupt_listener()
 
+    def stop_playback(self, force=False):
+        """Stop both audio playback and the interrupt listener."""
+        print("AudioHandler stopping playback and interrupt listener...")
+        self.player.stop_playback(force)
+        self.detector.stop_interrupt_listener() # Ensure detector is stopped too
 
+    # --- Cleanup Method ---
     def __del__(self):
-        """Cleanup PyAudio resources."""
+        """Cleanup resources for player, detector, and PyAudio."""
+        print("Cleaning up AudioHandler...")
         try:
-            self.stop_playback() # This now also stops the interrupt listener
-            
-            # Clear queue
-            while not self.audio_queue.empty():
-                try:
-                    self.audio_queue.get_nowait()
-                    self.audio_queue.task_done()
-                except:
-                    break
-                    
-            # Wait for thread to terminate safely
-            if self.playback_thread and self.playback_thread.is_alive():
-                try:
-                    self.playback_thread.join(timeout=0.5)
-                except:
-                    pass
-            
-            # Finally terminate PyAudio
-            if hasattr(self, 'pyaudio'):
-                try:
-                    self.pyaudio.terminate()
-                except:
-                    pass
+            if hasattr(self, 'player') and self.player:
+                self.player.cleanup()
+            if hasattr(self, 'detector') and self.detector:
+                self.detector.cleanup()
+
+            # Terminate PyAudio only after components are cleaned up
+            if hasattr(self, 'pyaudio_instance') and self.pyaudio_instance:
+                # Add a small delay before terminating PyAudio to ensure streams are closed
+                time.sleep(0.2)
+                self.pyaudio_instance.terminate()
+                print("PyAudio terminated.")
+
         except Exception as e:
-            print(f"Error during cleanup: {e}")
-            # Continue with cleanup despite errors 
+            print(f"Error during AudioHandler cleanup: {e}")
+            traceback.print_exc()
+        finally:
+             print("AudioHandler cleanup finished.") 

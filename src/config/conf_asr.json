@@ -19,7 +19,10 @@
       "energy_threshold": 30,
       "timeout": 5,
       "min_energy": 30,
-      "max_phrase_duration": 300
+      "max_phrase_duration": 300,
+      "vad_energy_threshold": 300,
+      "vad_activation_chunks": 3,
+      "vad_confidence_threshold": 0.5
     },
     "recognizer": {
       "pause_threshold": 1.0,

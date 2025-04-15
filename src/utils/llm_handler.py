@@ -75,13 +75,14 @@ class LLMHandler:
                     ---------------------
                     {context}
                     ---------------------
-                    Given the context information and not prior knowledge, answer the following question:
                     {query}
                     """
 
         # Add RAG prompt to messages
         rag_messages = messages.copy()
         rag_messages.append({"role": "user", "content": rag_prompt})
-        
-        # Get response using the enhanced context
-        return self.get_response(rag_messages)
+
+        # Get response using the enhanced context and yield its chunks
+        response_generator = self.get_response(rag_messages)
+        for chunk in response_generator:
+             yield chunk
