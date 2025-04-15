@@ -1,106 +1,122 @@
-[![YouTube](https://img.shields.io/badge/YouTube-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://youtu.be/x92FLnwf-nA)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/abdullahalasif-bd/)
-[![GitHub Stars](https://img.shields.io/github/stars/asiff00/On-Device-Speech-to-Speech-Conversational-AI?style=for-the-badge)](https://github.com/asiff00/On-Device-Speech-to-Speech-Conversational-AI/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/asiff00/On-Device-Speech-to-Speech-Conversational-AI?style=for-the-badge)](https://github.com/asiff00/On-Device-Speech-to-Speech-Conversational-AI/network/members)
-# On Device Speech to Speech Conversational AI
-[![On Device Speech to Speech AI](https://github.com/asiff00/On-Device-Speech-to-Speech-Conversational-AI/raw/main/assets/system_architecture.svg)](https://github.com/asiff00/On-Device-Speech-to-Speech-Conversational-AI/raw/main/assets/video_demo.mov)
+# Alpaca Voice Assistant
 
-This is a real-time conversational system for two-way speech communication with AI models, utilizing a continuous streaming architecture for fluid conversations with immediate responses and natural interruption handling. All components of this system are run locally [on CPU, in my test system].
+A locally-runnable AI voice assistant leveraging powerful open-source models for transcription, language understanding, and speech synthesis. Designed for responsiveness with streaming capabilities and interruptible playback.
 
-<h2 style="color: yellow;">HOW TO RUN IT</h2>
+## Features
 
-1. **Prerequisites:**
-   - Install Python 3.8+ (tested with 3.12)
-   - Install [eSpeak NG](https://github.com/espeak-ng/espeak-ng/releases/tag/1.52.0) / `sudo apt install -y espeak-ng` for Linux (required for voice synthesis) [Linux user check this issue](https://github.com/asiff00/On-Device-Speech-to-Speech-Conversational-AI/issues/7#issuecomment-2661541707)
-   - Install Ollama from https://ollama.ai/
+- **Local First:** Runs entirely on your machine (requires Ollama).
+- **Modular Architecture:** Core components (audio, STT, LLM, TTS, conversation, config) are separated for better maintainability.
+- **Streaming TTS:** Assistant starts speaking as soon as the first part of the response is generated.
+- **Interruptible Playback:** Uses Silero VAD and RMS energy detection to allow the user to interrupt the assistant mid-speech.
+- **RAG Integration:** Utilizes Retrieval-Augmented Generation via ChromaDB and Ollama embeddings to answer questions based on imported documents.
+- **Configurable:** Easily configure models, presets, VAD sensitivity, and other parameters via JSON files.
+- **Models Used (Defaults):**
+  - **ASR:** `faster-whisper` (`Systran/faster-whisper-small`)
+  - **LLM:** `ollama` (`gemma3:4b`)
+  - **TTS:** Kokoro TTS
+  - **Embedding (for RAG):** `nomic-embed-text` (via Ollama)
+  - **VAD:** `silero-vad`
 
-2. **Setup:**
-   - Clone this repository `git clone https://github.com/asiff00/On-Device-Speech-to-Speech-Conversational-AI.git`
-   - Run `cd On-Device-Speech-to-Speech-Conversational-AI` and go to the project directory
-   - Run `git lfs pull` from the project root directory to download the models and voices
-   - Copy `.env.template` to `.env`
-   - Add your HuggingFace token to `.env`
-   - Install requirements: `pip install -r requirements.txt`
-   - Add any missing packages if not already installed `pip install <package_name>`
+## Architecture
 
+- `main.py`: Entry point, handles initialization and the main execution loop.
+- `src/core/`: Contains the core orchestration classes:
+  - `alpaca.py`: Main container class (`Alpaca`, formerly `VoiceAssistant`).
+  - `alpaca_interaction.py`: Handles the logic for a single interaction turn (`InteractionHandler`).
+  - `component_manager.py`: Manages the lifecycle (loading, access, cleanup) of utility handlers.
+  - `conversation_manager.py`: Manages the conversation history.
+  - `config_loader.py`: Handles command-line argument parsing and loading JSON configurations.
+- `src/utils/`: Contains specialized handlers for specific tasks:
+  - `audio_handler.py`: Coordinates audio input (listening) and output (playback, interruption).
+  - `audio_player.py`: Handles audio playback queue and thread.
+  - `interrupt_detector.py`: Handles VAD and RMS energy detection for interruptions.
+  - `stt_handler.py`: Interface for the chosen speech-to-text model (e.g., `Transcriber`).
+  - `llm_handler.py`: Interface for the chosen large language model (e.g., Ollama).
+  - `tts_handler.py`: Interface for the chosen text-to-speech model.
+  - `helper_functions.py`: Utility functions.
+- `src/rag/`: Contains scripts related to RAG:
+  - `importdocs.py`: Script to process and import documents into the ChromaDB vector store.
+- `src/config/`: Contains JSON configuration files (`conf_asr.json`, `conf_tts.json`, `conf_llm.json`).
 
-4. **Run Ollama:**
-   - Start Ollama service
-   - Run: `ollama run qwen2.5:0.5b-instruct-q8_0` or any other model of your choice
+## Setup & Installation
 
-5. **Start Application:**
-   - Run: `python speech_to_speech.py`
-   - Wait for initialization (models loading)
-   - Start talking when you see "Voice Chat Bot Ready"
-   - Long press `Ctrl+C` to stop the application
-</details>
+**Prerequisites:**
 
+- Python 3.9+
+- [Ollama](https://ollama.com/) installed and running.
+- [ChromaDB](https://www.trychroma.com/) server running (for RAG functionality). By default, it's expected on `http://localhost:8000`.
+- Microphone connected and configured.
+- Speakers/Headphones.
 
-# How does it work?
-We basically put a few models together to work in a multi-threaded architecture, where each component operates independently but is integrated through a queue management system to ensure performance and responsiveness. The flow works as follows: 
-### Loop (VAD -> Whisper -> LM -> TextChunker -> TTS)
+**Installation:**
 
-To achieve that we use:
+1.  **Clone the repository:**
+    ```bash
+    git clone <your-repo-url>
+    cd <your-repo-directory>
+    ```
+2.  **Install Python dependencies:**
+    - It's highly recommended to use a virtual environment:
+      ```bash
+      python -m venv venv
+      source venv/bin/activate # On Windows use `venv\Scripts\activate`
+      ```
+    - Install required packages (You should create a `requirements.txt` file):
+      ```bash
+      # Example requirements (create a requirements.txt with exact versions)
+      pip install -U torch torchaudio torchvision # Ensure compatibility!
+      pip install -U ollama faster-whisper SpeechRecognition pyaudio sounddevice soundfile numpy
+      pip install -U silero-vad onnxruntime # For VAD
+      pip install -U chromadb-client # For RAG
+      # Add any other specific dependencies (e.g., google-cloud-texttospeech)
+      ```
+      _Note: Verify PyTorch version compatibility with `torchvision` and potentially other libraries._
+3.  **Download Ollama Models:**
+    ```bash
+    ollama pull gemma3:4b # Default LLM
+    ollama pull nomic-embed-text # Default embedding model for RAG
+    # Pull other models if specified in your configs
+    ```
+4.  **Import RAG Documents:**
+    Run the import script at least once to populate the ChromaDB collection:
+    ```bash
+    python src/rag/importdocs.py
+    ```
 
-- **Voice Activity Detection**: Pyannote:pyannote/segmentation-3.0
-- **Speech Recognition**: Whisper:whisper-tiny.en (OpenAI)
-- **Language Model**: LM Studio/Ollama with qwen2.5:0.5b-instruct-q8_0
-- **Voice Synthesis**: Kokoro:hexgrad/Kokoro-82M
+## Running the Assistant
 
-We use custom text processing and queues to manage data, with separate queues for text and audio. This setup allows the system to handle heavy tasks without slowing down. We also use an interrupt mechanism allowing the user to interrupt the AI at any time. This makes the conversation feel more natural and responsive rather than just a generic TTS engine.
+Execute the main script:
 
-## Demo Video:
-A demo video is uploaded here. Either click on the thumbnail or click on the YouTube link: [https://youtu.be/x92FLnwf-nA](https://youtu.be/x92FLnwf-nA).
+```bash
+python main.py [OPTIONS]
+```
 
-[![On Device Speech to Speech AI Demo](https://img.youtube.com/vi/x92FLnwf-nA/0.jpg)](https://youtu.be/x92FLnwf-nA)
+**Key Command-Line Options:**
 
-## Performance:
-![Timing Chart](assets/timing_chart.png)
+- `--asr-preset <name>`: Use a specific preset from `conf_asr.json` (default: `default`).
+- `--tts-preset <name>`: Use a specific preset from `conf_tts.json` (default: `default`).
+- `--llm-preset <name>`: Use a specific preset from `conf_llm.json` (default: `default`).
+- `--system-prompt "<prompt>"`: Override the LLM system prompt defined in the config.
+- `--timeout <seconds>`: Speech detection timeout (default: 5).
+- `--phrase-limit <seconds>`: Maximum duration for a single user phrase (default: 10).
+- `--fixed-duration <seconds>`: Use fixed-duration recording instead of dynamic listening.
+- `--asr-config <path>`, `--tts-config <path>`, `--llm-config <path>`: Specify alternative paths to configuration files.
 
-I ran this test on an AMD Ryzen 5600G, 16 GB, SSD, and No-GPU setup, achieving consistent ~2s latency. On average, it takes around 1.5s for the system to respond to a user query from the point the user says the last word. Although I haven't tested this on a GPU, I believe testing on a GPU would significantly improve performance and responsiveness.
+## Configuration
 
-## How do we reduce latency?
-### Priority based text chunking 
-We capitalize on the streaming output of the language model to reduce latency. Instead of waiting for the entire response to be generated, we process and deliver each chunk of text as soon as they become available, form phrases, and send it to the TTS engine queue. We play the audio as soon as it becomes available. This way, the user gets a very fast response, while the rest of the response is being generated.
+Configuration is managed through JSON files located in `src/config/`:
 
-Our custom `TextChunker` analyzes incoming text streams from the language model and splits them into chunks suitable for the voice synthesizer. It uses a combination of sentence breaks (like periods, question marks, and exclamation points) and semantic breaks (like "and", "but", and "however") to determine the best places to split the text, ensuring natural-sounding speech output.
+- `conf_asr.json`: Settings for Automatic Speech Recognition (ASR), audio processing, and VAD parameters.
+- `conf_tts.json`: Settings for Text-to-Speech (TTS).
+- `conf_llm.json`: Settings for the Large Language Model (LLM), including RAG and generation parameters.
 
-The `TextChunker` maintains a set of break points:
-- **Sentence breaks**: `.`, `!`, `?` (highest priority)
-- **Semantic breaks** with priority levels:
-  - Level 4: `however`, `therefore`, `furthermore`, `moreover`, `nevertheless`
-  - Level 3: `while`, `although`, `unless`, `since`
-  - Level 2: `and`, `but`, `because`, `then`
-- **Punctuation breaks**: `;` (4), `:` (4), `,` (3), `-` (2)
+Each file can contain multiple "presets". You can select which preset to use via command-line arguments (e.g., `--asr-preset faster`). The `default` preset is used if none is specified.
 
-When processing text, the `TextChunker` uses a priority-based system:
-1. Looks for sentence-ending punctuation first (highest priority 5)
-2. Checks for semantic break words with their associated priority levels
-3. Falls back to punctuation marks with lower priorities
-4. Splits at target word count if no natural breaks are found
+Key settings to potentially adjust:
 
-The text chunking method significantly reduces perceived latency by processing and delivering the first chunk of text as soon as it becomes available. Let's consider a hypothetical system where the language model generates responses at a certain rate. If we imagine a scenario where the model produces a response of N words at a rate of R words per second, waiting for the complete response would introduce a delay of N/R seconds before any audio is produced. With text chunking, the system can start processing the first M words as soon as they are ready (after M/R seconds), while the remaining words continue to be generated. This means the user hears the initial part of the response in just M/R seconds, while the rest streams in naturally.
-
-### Leading filler word LLM Prompting
-We use a another little trick in the LLM prompt to speed up the system’s first response. We ask the LLM to start its reply with filler words like “umm,” “so,” or “well.” These words have a special role in language: they create natural pauses and breaks. Since these are single-word responses, they take only milliseconds to convert to audio. When we apply our chunking rules, the system splits the response at the filler word (e.g., “umm,”) and sends that tiny chunk to the TTS engine. This lets the bot play the audio for “umm” almost instantly, reducing perceived latency. The filler words act as natural “bridges” to mask processing delays. Even a short “umm” gives the illusion of a fluid conversation, while the system works on generating the rest of the response in the background. Longer chunks after the filler word might take more time to process, but the initial pause feels intentional and human-like.
-
-We have fallback plans for cases when the LLM fails to start its response with fillers. In those cases, we put hand breaks at 2 to 5 words, which comes with a cost of a bit of choppiness at the beginning but that feels less painful than the system taking a long time to give the first response.
-
-**In practice,** this approach can reduce perceived latency by up to 50-70%, depending on the length of the response and the speed of the language model. For example, in a typical conversation where responses average 15-20 words, our techniques can bring the initial response time down from 1.5-2 seconds to just `0.5-0.7` seconds, making the interaction feel much more natural and immediate.
-
-
-## Resources
-This project utilizes the following resources:
-*   **Text-to-Speech Model:** [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M)
-*   **Speech-to-Text Model:** [Whisper](https://huggingface.co/openai/whisper-tiny.en)
-*   **Voice Activity Detection Model:** [Pyannote](https://huggingface.co/pyannote/segmentation-3.0)
-*   **Large Language Model Server:** [Ollama](https://ollama.ai/)
-*   **Fallback Text-to-Speech Engine:** [eSpeak NG](https://github.com/espeak-ng/espeak-ng/releases/tag/1.52.0)
-
-## Acknowledgements
-This project draws inspiration and guidance from the following articles and repositories, among others:
-*   [Realtime speech to speech conversation with MiniCPM-o](https://github.com/OpenBMB/MiniCPM-o)
-*   [A Comparative Guide to OpenAI and Ollama APIs](https://medium.com/@zakkyang/a-comparative-guide-to-openai-and-ollama-apis-with-cheathsheet-5aae6e515953)
-*   [Building Production-Ready TTS with Kokoro-82M](https://medium.com/@simeon.emanuilov/kokoro-82m-building-production-ready-tts-with-82m-parameters-unfoldai-98e36ff286b9)
-*   [Kokoro-82M: The Best TTS Model in Just 82 Million Parameters](https://medium.com/data-science-in-your-pocket/kokoro-82m-the-best-tts-model-in-just-82-million-parameters-512b4ba4f94c)
-*   [StyleTTS2 Model Implementation](https://github.com/yl4579/StyleTTS2/blob/main/models.py)
+- `model_id` (in ASR, TTS, LLM configs): Change the specific models used.
+- `device`, `compute_type` (in ASR/faster-whisper config): Optimize for your hardware (e.g., `cuda`, `float16`).
+- `vad_energy_threshold`, `vad_confidence_threshold` (in ASR config `audio_validation`): Tune interrupt sensitivity.
+- `temperature`, `top_p`, `top_k` (in LLM config): Adjust LLM generation creativity/determinism.
+- `voice`, `speed`, `expressiveness` (in TTS config `kokoro`): Customize TTS output.
+- `system_prompt` (in LLM config): Change the assistant's base personality/instructions.
