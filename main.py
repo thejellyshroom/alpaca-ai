@@ -6,27 +6,13 @@ import os
 
 
 def load_config(config_file):
-    try:
-        with open(config_file, 'r') as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"Error loading configuration file {config_file}: {str(e)}")
-        return {}
+    with open(config_file, 'r') as f:
+        return json.load(f)
 
 def get_default_config_paths():
     """Get default paths for config files."""
-    # Get the directory of this file
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    # Construct the path to the src directory (assuming it's at the same level as main.py or one level up if main.py is inside src)
-    # A more robust approach might be needed depending on project structure, but this covers common cases.
     src_dir = os.path.join(script_dir, 'src')
-    if not os.path.isdir(src_dir):
-         # If main.py is inside src, go one level up
-         src_dir = os.path.join(os.path.dirname(script_dir), 'src')
-         if not os.path.isdir(src_dir):
-              # Fallback or raise error if src isn't found nearby
-              print("Warning: Could not reliably determine 'src' directory location relative to main.py. Using script directory.")
-              src_dir = script_dir # Fallback to script dir if src isn't found
 
     return {
         'asr': os.path.join(src_dir, 'config/conf_asr.json'),
@@ -61,35 +47,19 @@ def main():
     importdocs()
     
     # Load configurations
-    # Start with empty configs
     asr_config = {}
     tts_config = {}
     llm_config = {}
     
     # Load from config files
-    if os.path.exists(args.asr_config):
-        asr_conf_all = load_config(args.asr_config)
-        if args.asr_preset in asr_conf_all:
-            asr_config = asr_conf_all[args.asr_preset]
-        else:
-            print(f"Warning: ASR preset '{args.asr_preset}' not found. Using 'default' preset.")
-            asr_config = asr_conf_all.get('default', {})
+    asr_conf_all = load_config(args.asr_config)
+    asr_config = asr_conf_all[args.asr_preset]
     
-    if os.path.exists(args.tts_config):
-        tts_conf_all = load_config(args.tts_config)
-        if args.tts_preset in tts_conf_all:
-            tts_config = tts_conf_all[args.tts_preset]
-        else:
-            print(f"Warning: TTS preset '{args.tts_preset}' not found. Using 'default' preset.")
-            tts_config = tts_conf_all.get('default', {})
-    
-    if os.path.exists(args.llm_config):
-        llm_conf_all = load_config(args.llm_config)
-        if args.llm_preset in llm_conf_all:
-            llm_config = llm_conf_all[args.llm_preset]
-        else:
-            print(f"Warning: LLM preset '{args.llm_preset}' not found. Using 'default' preset.")
-            llm_config = llm_conf_all.get('default', {})
+    tts_conf_all = load_config(args.tts_config)
+    tts_config = tts_conf_all[args.tts_preset]
+
+    llm_conf_all = load_config(args.llm_config)
+    llm_config = llm_conf_all[args.llm_preset]
     
     # Prepare parameters for VoiceAssistant
     assistant_params = {}

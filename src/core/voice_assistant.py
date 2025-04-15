@@ -53,7 +53,7 @@ class VoiceAssistant:
     def load_all_components(self):
         """Load all components of the voice assistant."""
         self.load_audio_handler()
-        self.load_transcriber()
+        self.load_stt()
         self.load_llm_handler()
         self.load_tts_handler()
         
@@ -81,7 +81,7 @@ class VoiceAssistant:
         except Exception as e:
             print(f"Error initializing audio handler: {str(e)}")
     
-    def load_transcriber(self):
+    def load_stt(self):
         """Load the transcription component."""
         self.transcriber = unload_component(self.transcriber, "transcriber")
         try:
