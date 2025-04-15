@@ -102,16 +102,12 @@ def main():
     # Initialize the voice assistant
     assistant = VoiceAssistant(**assistant_params)
 
-    # Start the interaction loop
-    try:
-        while True:
-            assistant.interaction_loop(
-                duration=args.fixed_duration, 
-                timeout=args.timeout,
-                phrase_limit=args.phrase_limit,
-            )
-    except KeyboardInterrupt:
-        print("\nExiting...")
+    # Start the interaction loop using the new main_loop method
+    assistant.main_loop(
+        duration=args.fixed_duration,
+        timeout=args.timeout,
+        phrase_limit=args.phrase_limit,
+    )
 
 if __name__ == "__main__":
     main()

@@ -9,6 +9,7 @@ import sounddevice as sd
 import soundfile as sf
 import io
 import os
+import math # Added for RMS calculation
 
 #========TODO: add energy check for silent audio and for shouting. 30 for whispers, 100 for normal speech, 200 for shouting
 # shall be added to the config file and implemented in this way
@@ -30,6 +31,8 @@ class AudioHandler:
         self.timeout = self.audio_validation.get('timeout')
         self.min_energy = self.audio_validation.get('min_energy')
         self.max_phrase_duration = self.audio_validation.get('max_phrase_duration')  # Default 5 minutes
+        self.vad_energy_threshold = self.audio_validation.get('vad_energy_threshold', 300) # Configurable VAD threshold
+        self.vad_activation_chunks = self.audio_validation.get('vad_activation_chunks', 3) # Chunks needed to trigger VAD
 
         # Recognizer parameters
         self.recognizer_config = self.config.get('recognizer', {})
@@ -44,6 +47,11 @@ class AudioHandler:
         self.playback_thread = None
         self.is_playing = False
         self.should_stop_playback = threading.Event()
+        
+        # Interrupt Listener components
+        self.interrupt_listener_thread = None
+        self.should_stop_interrupt_listener = threading.Event()
+        self._interrupt_event_ref = None # To store the event passed by the caller
         
         # Track total audio duration for dynamic timeout calculation
         self.total_audio_duration = 0.0
@@ -243,7 +251,10 @@ class AudioHandler:
             self.playback_thread.start()
     
     def stop_playback(self):
-        """Improved playback stopping with buffer clearing"""
+        """Improved playback stopping with buffer clearing and interrupt listener stop"""
+        # Stop interrupt listener first if active
+        self.stop_interrupt_listener()
+
         if self.is_playing:
             self.should_stop_playback.set()
             
@@ -340,12 +351,115 @@ class AudioHandler:
                     print(f"Error closing audio stream: {e}")
             self.is_playing = False
             self.total_audio_duration = 0.0  # Reset duration tracking
+            # Ensure interrupt listener is stopped when playback finishes naturally
+            self.stop_interrupt_listener()
+
+
+    # --- Interrupt Listener Methods ---
+
+    def _calculate_rms(self, data):
+        """Calculate Root Mean Square of audio data."""
+        # Assuming data is numpy array of integers (int16)
+        if data.dtype != np.int16:
+             # Attempt conversion if possible, otherwise return low energy
+             try:
+                 data = data.astype(np.int16)
+             except ValueError:
+                 print("Warning: Could not convert audio data to int16 for RMS calculation.")
+                 return 0
+
+        # Ensure data is not empty
+        if data.size == 0:
+            return 0
+
+        # Calculate RMS
+        rms = math.sqrt(np.mean(np.square(data, dtype=np.float64))) # Use float64 for intermediate calculation
+        return rms
+
+    def _interrupt_listener_run(self):
+        """Background thread to listen for user interruption via VAD."""
+        print("Interrupt listener started.")
+        stream = None
+        active_chunks = 0
+        try:
+            stream = self.pyaudio.open(format=self.format,
+                                       channels=self.channels,
+                                       rate=self.sample_rate,
+                                       input=True,
+                                       frames_per_buffer=self.chunk)
+
+            while not self.should_stop_interrupt_listener.is_set():
+                try:
+                    # Read chunk with a small timeout to allow checking the stop event
+                    data = stream.read(self.chunk, exception_on_overflow=False)
+                    audio_chunk = np.frombuffer(data, dtype=np.int16)
+
+                    # Calculate energy (RMS)
+                    rms = self._calculate_rms(audio_chunk)
+                    # print(f"RMS: {rms:.2f}") # DEBUG: Uncomment to see RMS values
+
+                    if rms > self.vad_energy_threshold:
+                        active_chunks += 1
+                    else:
+                        active_chunks = 0 # Reset if energy drops
+
+                    # Check if activation threshold is met
+                    if active_chunks >= self.vad_activation_chunks:
+                        print(f"Interrupt detected! (RMS: {rms:.2f} > Threshold: {self.vad_energy_threshold} for {active_chunks} chunks)")
+                        if self._interrupt_event_ref:
+                            self._interrupt_event_ref.set() # Signal the main thread/caller
+                        # Once detected, we can stop listening
+                        self.should_stop_interrupt_listener.set() # Signal self to stop
+                        break # Exit loop
+
+                except IOError as e:
+                    if e.errno == pyaudio.paInputOverflowed:
+                        print("Input overflowed. Skipping.")
+                    else:
+                        print(f"IOError in interrupt listener: {e}")
+                        time.sleep(0.1) # Avoid busy-waiting on error
+                except Exception as e:
+                    print(f"Error in interrupt listener: {e}")
+                    time.sleep(0.1) # Avoid busy-waiting on error
+
+        finally:
+            if stream is not None:
+                try:
+                    stream.stop_stream()
+                    stream.close()
+                except Exception as e:
+                    print(f"Error closing interrupt listener stream: {e}")
+            print("Interrupt listener stopped.")
+
+
+    def start_interrupt_listener(self, interrupt_event):
+        """Starts the VAD interrupt listener thread."""
+        if self.interrupt_listener_thread is None or not self.interrupt_listener_thread.is_alive():
+            self.should_stop_interrupt_listener.clear()
+            self._interrupt_event_ref = interrupt_event # Store reference to the event
+            self.interrupt_listener_thread = threading.Thread(
+                target=self._interrupt_listener_run,
+                daemon=True
+            )
+            self.interrupt_listener_thread.start()
+        else:
+            print("Interrupt listener already running.")
+
+
+    def stop_interrupt_listener(self):
+        """Stops the VAD interrupt listener thread."""
+        if self.interrupt_listener_thread and self.interrupt_listener_thread.is_alive():
+            self.should_stop_interrupt_listener.set()
+            # Don't wait indefinitely, just signal
+            # self.interrupt_listener_thread.join(timeout=0.5) # Optional: wait briefly
+            self.interrupt_listener_thread = None # Clear the thread reference
+            self._interrupt_event_ref = None
 
 
     def __del__(self):
         """Cleanup PyAudio resources."""
         try:
-            self.stop_playback()
+            self.stop_playback() # This now also stops the interrupt listener
             
             # Clear queue
             while not self.audio_queue.empty():

@@ -1,5 +1,5 @@
 from ..utils.audio_handler import AudioHandler
-from ..utils.transcriber import Transcriber
+from ..utils.stt_handler import Transcriber
 from ..utils.llm_handler import LLMHandler
 from ..utils.tts_handler import TTSHandler
 from ..utils.helper_functions import *
@@ -7,6 +7,7 @@ import os
 import torch
 import time
 import traceback
+import threading
 
 #TODO: clean up code and split into multiple files/functions
 class VoiceAssistant:
@@ -162,10 +163,10 @@ class VoiceAssistant:
         """Process text with LLM and get response.
         
         Args:
-            text (str): Input text to process
+            text (list): Conversation history list
             
         Returns:
-            str: LLM's response
+            str or generator: LLM's response (can be a generator for streaming)
         """
         query = text[-1]
         # Use RAG for knowledge-based queries
@@ -176,108 +177,200 @@ class VoiceAssistant:
         return response
     
     def speak(self, text):
-        """Convert text to speech and play it.
-        
+        """Convert text to speech and play it, allowing for interruption.
+
         Args:
             text (str): Text to speak
-            
+
         Returns:
-            bool: True if speech was successfully played
+            str: "COMPLETED" if playback finished, "INTERRUPTED" if user spoke during playback.
         """
         if not self.tts_enabled:
             print("TTS is disabled. Cannot speak the response.")
-            return False
-            
+            return "COMPLETED"
+
         try:
-            # Ensure text is not None
             if text is None:
                 print("Warning: Received None text to speak")
-                return False
+                return "COMPLETED"
 
-            # Split text into sentences for more natural pauses
+            # Prepare for interruptible playback
+            interrupt_event = threading.Event()
+            interrupted = False
+
+            # Start listening for interruptions
+            if self.audio_handler:
+                self.audio_handler.start_interrupt_listener(interrupt_event)
+
+            # Split text into sentences for potentially better interrupt points
             sentences = split_into_sentences(text)
-            
+
+            # Play sentence by sentence, checking for interrupt
             for sentence in sentences:
-                # Synthesize and play each sentence
+                if interrupt_event.is_set():
+                    print("Interrupt detected during sentence processing.")
+                    interrupted = True
+                    break
+
+                # Synthesize sentence
                 audio_array, sample_rate = self.tts_handler.synthesize(sentence)
-                    
-                if len(audio_array) > 0:
+
+                if interrupt_event.is_set():
+                    print("Interrupt detected after sentence synthesis.")
+                    interrupted = True
+                    break
+
+                if audio_array is not None and len(audio_array) > 0:
+                    # Play audio (non-blocking)
                     self.audio_handler.play_audio(audio_array, sample_rate)
-                    # Small pause between sentences
-                    time.sleep(0.3)
+                    # Brief sleep allows checking interrupt event more frequently
+                    # and gives playback thread time to start
+                    time.sleep(0.1)
                 else:
-                    print("Generated audio is empty. Cannot play.")
-            
-            # Wait for all audio to finish playing
-            if self.audio_handler and self.audio_handler.is_playing:
-                self.audio_handler.wait_for_playback_complete(timeout=None)
-            
-            return True
-            
+                    print("Generated audio is empty. Skipping sentence.")
+
+            # If already interrupted, skip waiting for remaining audio
+            if not interrupted:
+                # Wait for any remaining queued audio to play, checking for interrupts
+                print("Waiting for final audio chunks to play...")
+                while self.audio_handler and self.audio_handler.is_playing:
+                    if interrupt_event.is_set():
+                        print("Interrupt detected while waiting for playback completion.")
+                        interrupted = True
+                        break
+                    time.sleep(0.1)
+
+            # --- Cleanup --- 
+            if interrupted:
+                print("Stopping playback due to interrupt.")
+                if self.audio_handler:
+                    # stop_playback also stops the listener
+                    self.audio_handler.stop_playback()
+                return "INTERRUPTED"
+            else:
+                print("Playback completed normally.")
+                # Ensure listener is stopped if playback finished naturally
+                # (It should be stopped by the playback thread finishing, but just in case)
+                if self.audio_handler:
+                    self.audio_handler.stop_interrupt_listener()
+                return "COMPLETED"
+
         except Exception as e:
-            print(f"Error in speech synthesis: {str(e)}")
+            print(f"Error in speak method: {str(e)}")
             traceback.print_exc()
-            return False
-    
+            # Ensure listener is stopped on error
+            if self.audio_handler:
+                 self.audio_handler.stop_interrupt_listener()
+            return "ERROR"
+
     def interaction_loop(self, duration=None, timeout=10, phrase_limit=10):
-        """Record audio, transcribe, process with streaming response.
-        
+        """Record audio, transcribe, process with streaming response, handle interrupts.
+
         Args:
             duration (int, optional): Fixed recording duration in seconds
             timeout (int, optional): Maximum seconds to wait before giving up
             phrase_limit (int, optional): Maximum seconds for a single phrase
-            
+
         Returns:
             tuple: (transcribed_text, ai_response)
         """
         try:
-            # Ensure all audio playback is stopped
+            # Ensure all audio playback is stopped before starting loop iteration
             if self.audio_handler:
                 self.audio_handler.stop_playback()
-            
+
             # Listen for user input
             print("\nListening for your voice...")
             transcribed_text = self.listen(duration=duration, timeout=timeout)
-            
-            # Handle no speech detected
-            if not transcribed_text or len(transcribed_text.strip()) < 2:
-                ai_response = "Seems like you didn't say anything."
+
+            # Handle specific error codes from listen
+            if transcribed_text in ["TIMEOUT_ERROR", "low_energy"]:
+                ai_response = f"Seems like you didn't say anything or it was too quiet ({transcribed_text})."
                 print("\nAssistant:", ai_response)
+                # Optionally speak this message, or just print and loop
+                # self.speak(ai_response) # Consider if you want assistant to speak timeout messages
                 return "", ai_response
-            
-            if transcribed_text == "TIMEOUT_ERROR":
-                ai_response = "Time out error occurred"
-                print("\nAssistant:", ai_response)
-                return transcribed_text, ai_response
-            
-            # Display transcribed text    
-            print("\nYou said:", transcribed_text)
-            
-            # Add user message to conversation history
+
+            # Handle general lack of transcription
+            if not transcribed_text or len(transcribed_text.strip()) < 2:
+                # Assuming empty string or None might indicate other listen errors
+                print("\nAssistant: I didn't catch that. Could you please repeat?")
+                # self.speak("I didn't catch that. Could you please repeat?")
+                return "", "No transcription received."
+
+            # --- Process valid input ---
+            print(f"\nYou: {transcribed_text}")
+            # Add user message to history
             self.conversation_history.append({"role": "user", "content": transcribed_text})
-            
-            try:
-                # Get streaming response and process it
-                response_stream = self.process_and_respond(self.conversation_history)
-                assistant_buffer = process_streaming_response(
-                    self.tts_handler, 
-                    self.audio_handler, 
-                    response_stream, 
-                    self.tts_enabled
-                )
-            except Exception as e:
-                print(f"\nError during response generation: {e}")
-                assistant_buffer = "I'm sorry, I encountered an error while generating a response."
-                print("\nFallback response:", assistant_buffer)
-            
-            # Wait for all audio to complete before returning
-            if self.audio_handler and self.tts_enabled:
-                self.audio_handler.wait_for_playback_complete(timeout=None)
-            
-            return transcribed_text, assistant_buffer
-            
+
+            # Get response from LLM
+            print("\nAssistant thinking...")
+            response_source = self.process_and_respond(self.conversation_history)
+
+            # --- Consume generator if necessary --- 
+            if hasattr(response_source, '__iter__') and not isinstance(response_source, str):
+                print("(Streaming response detected, collecting...)")
+                ai_response_parts = []
+                for chunk in response_source:
+                    # Assuming chunks are strings, handle potential errors if not
+                    if isinstance(chunk, str):
+                        print(chunk, end="", flush=True) # Print stream progress
+                        ai_response_parts.append(chunk)
+                    else:
+                         print(f"\nWarning: Received non-string chunk from LLM: {type(chunk)}")
+                ai_response = "".join(ai_response_parts)
+                print() # Newline after streaming
+            else:
+                # Assume it's already a string
+                ai_response = response_source
+
+            # Add assistant response to history
+            self.conversation_history.append({"role": "assistant", "content": ai_response})
+
+            # Print and speak the response (ai_response is now guaranteed to be a string)
+            print(f"\nAssistant: {ai_response}")
+            speak_status = self.speak(ai_response)
+
+            # Check if speaking was interrupted
+            if speak_status == "INTERRUPTED":
+                print("(Assistant speech interrupted by user)")
+                # Loop immediately back to listening
+                return "INTERRUPTED", ai_response
+            elif speak_status == "ERROR":
+                print("(An error occurred during speech synthesis or playback)")
+                # Decide how to proceed, maybe retry or just loop
+
+            # Return normally if completed
+            return transcribed_text, ai_response
+
         except Exception as e:
-            print(f"Unexpected error in streaming interaction: {str(e)}")
+            print(f"Error in interaction loop: {str(e)}")
             traceback.print_exc()
-            return "", "I'm sorry, I encountered an unexpected error."
+            # Ensure playback/listening is stopped on unexpected loop errors
+            if self.audio_handler:
+                self.audio_handler.stop_playback()
+            return "ERROR", str(e)
+
+    def main_loop(self, duration=None, timeout=5, phrase_limit=10):
+        """The main loop that calls interaction_loop repeatedly."""
+        try:
+            while True:
+                result, _ = self.interaction_loop(
+                    duration=duration,
+                    timeout=timeout,
+                    phrase_limit=phrase_limit
+                )
+                # If interrupted, the loop continues automatically.
+                # If an error occurred, maybe add a delay or specific handling.
+                if result == "ERROR":
+                    print("Recovering from interaction error...")
+                    time.sleep(2)
+
+        except KeyboardInterrupt:
+            print("\nExiting Voice Assistant...")
+        finally:
+            # Cleanup resources
+            if self.audio_handler:
+                self.audio_handler.stop_playback() # Ensure everything stops
+            print("Cleanup complete.")
             
