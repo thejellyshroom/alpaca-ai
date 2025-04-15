@@ -1,0 +1,18 @@
+{
+    "default": {
+        "llm_local": true,
+        "model_name": "gemma3:4b",
+        "creativity_presets": ["low", "medium", "high", "random"],
+        "local": {
+            "llm_path": "",
+            "chat_format": "llama-3",
+            "n_gpu_layers": -1,
+            "repeat_penalty": 1.5,
+            "n_ctx": 4096,
+            "temperature": 1.2,
+            "top_p": 0.95,
+            "top_k": 60,
+            "max_tokens": 2048
+        }
+    }
+}
