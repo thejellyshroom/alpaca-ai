@@ -44,9 +44,9 @@ class ConfigLoader:
     def parse_arguments(self):
         """Parse command line arguments using argparse."""
         default_paths = self.get_default_config_paths()
-        parser = argparse.ArgumentParser(description='AI Voice Assistant')
+        parser = argparse.ArgumentParser(description='AI Voice assistant')
         
-        # Assistant behavior args
+        # assistant behavior args
         parser.add_argument('--fixed-duration', type=int, help='Use fixed duration recording instead of dynamic listening')
         parser.add_argument('--timeout', type=int, default=5, help='Maximum seconds to wait for speech before giving up')
         parser.add_argument('--phrase-limit', type=int, default=10, help='Maximum seconds for a single phrase')
@@ -105,12 +105,12 @@ class ConfigLoader:
         return True
         
     def get_assistant_parameters(self):
-        """Prepare parameters needed by VoiceAssistant based on loaded configs/args."""
+        """Prepare parameters needed by Alpaca based on loaded configs/args."""
         if not self.args or self.asr_config is None or self.tts_config is None or self.llm_config is None:
              print("Error: Arguments/Configs not loaded properly.")
              return None
          
-        # Parameters for VoiceAssistant __init__ and main_loop
+        # Parameters for Alpaca __init__ and main_loop
         params = {
              'asr_config': self.asr_config,
              'tts_config': self.tts_config,

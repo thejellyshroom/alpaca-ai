@@ -1,61 +1,40 @@
-from ..components.audio_handler import AudioHandler
-from ..components.stt_handler import Transcriber
-from ..components.llm_handler import LLMHandler
-from ..components.tts_handler import TTSHandler
-from ..utils.helper_functions import *
-from ..utils.conversation_manager import ConversationManager
-from ..utils.component_manager import ComponentManager
+# src/core/interaction_handler.py
+
 import time
 import traceback
+import types
 import threading
-import types # Needed to check for generator type
-import gc # Needed for garbage collection
 
-#TODO: clean up code and split into multiple files/functions
-class VoiceAssistant:
-    def __init__(self, 
-                 asr_config=None,
-                 tts_config=None,
-                 llm_config=None,
-                 duration=None, 
-                 timeout=5, 
-                 phrase_limit=10):
-        
-        # Configs are passed directly to ComponentManager
-        asr_config = asr_config or {}
-        tts_config = tts_config or {}
-        llm_config = llm_config or {}
-        
-        # Extract system prompt (potentially move to ConfigLoader later)
-        system_prompt = llm_config.get('system_prompt', "You are a helpful assistant.")
-        self.conversation_manager = ConversationManager(system_prompt=system_prompt)
+# Assuming managers and handlers are now in sibling directories or utils
+# Adjust imports based on your final structure
+from ..utils.component_manager import ComponentManager       # Corrected path assumed
+from ..utils.conversation_manager import ConversationManager # Corrected path assumed
+from ..utils.helper_functions import split_into_sentences, should_use_rag
 
-        # Initialize Component Manager (which loads handlers)
-        self.component_manager = ComponentManager(asr_config, tts_config, llm_config)
+class InteractionHandler:
+    def __init__(self, component_manager: ComponentManager, conversation_manager: ConversationManager):
+        """Initializes the handler with necessary managers."""
+        if not component_manager or not conversation_manager:
+             raise ValueError("ComponentManager and ConversationManager are required.")
+        self.component_manager = component_manager
+        self.conversation_manager = conversation_manager
+        print("InteractionHandler initialized.")
 
-        # Store loop parameters (originating from ConfigLoader -> main.py)
-        self._duration_arg = duration
-        self._timeout_arg = timeout
-        self._phrase_limit_arg = phrase_limit
-        
-        print("\nAI Voice Assistant Core Initialized!")
-        # Summary is now printed by ComponentManager
-        
-    def listen(self, duration=None, timeout=None):
+    # Renamed from Alpaca.listen
+    def _listen(self, duration=None, timeout=None):
         """Record audio and transcribe it using ComponentManager handlers."""
         audio_handler = self.component_manager.audio_handler
         transcriber = self.component_manager.transcriber
         
         if not audio_handler or not transcriber:
-             print("Error: Audio Handler or Transcriber not available.")
+             print("Error: Audio Handler or Transcriber not available in InteractionHandler.")
              return "ERROR"
 
         try:
             # Ensure any ongoing playback is stopped
-            if audio_handler.is_playing:
+            if audio_handler.player.is_playing: # Check player directly
                 print("Stopping any ongoing audio playback before listening...")
                 audio_handler.stop_playback()
-                # Use player directly for waiting
                 audio_handler.player.wait_for_playback_complete(timeout=2.0)
             
             print("Starting new listening session...")
@@ -80,20 +59,20 @@ class VoiceAssistant:
             return transcribed_text
             
         except AttributeError as e:
-             print(f"Error accessing audio/transcriber components: {e}. Was initialization successful?")
+             print(f"Error accessing audio/transcriber components via ComponentManager: {e}.")
              traceback.print_exc()
              return "ERROR"
         except Exception as e:
-            print(f"Unexpected error in listen method: {str(e)}")
+            print(f"Unexpected error in _listen method: {str(e)}")
             traceback.print_exc()
             return "ERROR"
-    
-    def process_and_respond(self):
+
+    # Renamed from Alpaca.process_and_respond
+    def _process_and_respond(self):
         """Process text with LLM using history and ComponentManager handlers."""
         llm_handler = self.component_manager.llm_handler
         if not llm_handler:
-             print("Error: LLM Handler not available.")
-             # Return an error message wrapped in a generator? Or handle differently?
+             print("Error: LLM Handler not available in InteractionHandler.")
              def error_gen(): yield "LLM Handler not available."
              return error_gen()
              
@@ -119,8 +98,9 @@ class VoiceAssistant:
             traceback.print_exc()
             def error_gen(): yield f"Error communicating with LLM: {e}"
             return error_gen()
-    
-    def speak(self, response_source):
+
+    # Renamed from Alpaca.speak
+    def _speak(self, response_source):
         """Convert text to speech using ComponentManager handlers."""
         tts_handler = self.component_manager.tts_handler
         audio_handler = self.component_manager.audio_handler
@@ -128,54 +108,52 @@ class VoiceAssistant:
 
         if not tts_enabled or not audio_handler or not tts_handler:
             print("TTS is disabled or handlers not available. Cannot speak.")
-            # Determine full text if possible, even if not speaking
             full_response_text = ""
             if isinstance(response_source, str):
                  full_response_text = response_source
             elif isinstance(response_source, types.GeneratorType):
-                 try:
-                      full_response_text = "".join(list(response_source))
-                      print(f"Assistant (TTS Disabled): {full_response_text}")
-                 except Exception as e:
-                      print(f"Error consuming generator when TTS disabled: {e}")
+                 try: full_response_text = "".join(list(response_source))
+                 except Exception: pass # Ignore errors consuming generator here
+                 print(f"assistant (TTS Disabled): {full_response_text}") # Print consumed text
             return ("DISABLED", full_response_text) 
 
         interrupt_event = threading.Event()
         interrupted = False
         full_response_text = ""
         tts_buffer = ""
-        min_chunk_len = 50
-        sentence_ends = (".", "!", "?", "\n")
+        # Include comma and semicolon as chunk triggers
+        sentence_ends = (".", "!", "?", "\n", ",", ";", "–")
         initial_words_spoken = False
         word_count = 0
         approx_words_for_initial_chunk = 8
+        # min_chunk_len is no longer needed for the primary logic after initial chunk
 
         try:
             print("Assistant:", end="", flush=True)
             audio_handler.detector.start_interrupt_listener(interrupt_event)
 
-            # Handle generator (streaming) case
             if isinstance(response_source, types.GeneratorType):
                 for token in response_source:
                     if interrupt_event.is_set(): interrupted = True; break
-
                     print(token, end="", flush=True) 
                     full_response_text += token
                     tts_buffer += token
-
-                    # Logic for Speaking Chunks
+                    
                     speak_this_chunk = False
+                    # --- Initial Chunk Logic --- 
                     if not initial_words_spoken:
                         word_count = tts_buffer.count(' ') + 1 
+                        # Speak if enough words OR any punctuation detected
                         if word_count >= approx_words_for_initial_chunk or any(tts_buffer.endswith(punc) for punc in sentence_ends):
                             speak_this_chunk = True
                             initial_words_spoken = True
+                    # --- Subsequent Chunk Logic --- 
                     else:
-                        buffer_len = len(tts_buffer)
-                        if buffer_len >= min_chunk_len and any(tts_buffer.endswith(punc) for punc in sentence_ends):
+                        # Speak only when punctuation is detected (removed length check)
+                        if any(tts_buffer.endswith(punc) for punc in sentence_ends):
                              speak_this_chunk = True
-
-                    # Synthesize and Play if a chunk is ready
+                             
+                    # --- Synthesize and Play --- 
                     if speak_this_chunk and tts_buffer.strip():
                         chunk_to_speak = tts_buffer.strip()
                         tts_buffer = ""
@@ -184,24 +162,18 @@ class VoiceAssistant:
                             audio_array, sample_rate = tts_handler.synthesize(chunk_to_speak)
                             if interrupt_event.is_set(): interrupted = True; break
                             if audio_array is not None and len(audio_array) > 0:
-                                # Use player directly
                                 audio_handler.player.play_audio(audio_array, sample_rate)
                                 time.sleep(0.05)
                         except Exception as e:
                              print(f"\nError during TTS synthesis for chunk: {e}")
                              time.sleep(0.1)
-
-                print() # Newline after streaming
-                # Synthesize any remaining text in the buffer
+                print()
                 if not interrupted and tts_buffer.strip():
                      try:
                          audio_array, sample_rate = tts_handler.synthesize(tts_buffer.strip())
                          if audio_array is not None and len(audio_array) > 0:
                              audio_handler.player.play_audio(audio_array, sample_rate)
-                     except Exception as e:
-                         print(f"\nError synthesizing final text segment: {e}")
-                         
-            # Handle string (non-streaming) case
+                     except Exception as e: print(f"\nError synthesizing final segment: {e}")
             elif isinstance(response_source, str):
                 full_response_text = response_source 
                 print(full_response_text)
@@ -214,134 +186,91 @@ class VoiceAssistant:
                         if audio_array is not None and len(audio_array) > 0:
                             audio_handler.player.play_audio(audio_array, sample_rate)
                             time.sleep(0.1)
-                    except Exception as e:
-                        print(f"\nError synthesizing sentence: {e}")
-                        time.sleep(0.1)
-
+                    except Exception as e: print(f"\nError synthesizing sentence: {e}"); time.sleep(0.1)
             else:
-                 print(f"\nError: speak method received unexpected type: {type(response_source)}")
+                 print(f"\nError: _speak received unexpected type: {type(response_source)}")
                  audio_handler.detector.stop_interrupt_listener()
                  return ("ERROR", f"Unexpected response type: {type(response_source)}")
 
-            # Wait for Playback Completion
             if not interrupted:
-                print("Waiting for audio playback to complete...")
                 wait_start_time = time.time()
                 while audio_handler.player.is_playing:
                     if interrupt_event.is_set(): interrupted = True; break
-                    if time.time() - wait_start_time > 60: interrupted = True; break
+                    if time.time() - wait_start_time > 60: interrupted = True; print("\nTTS Wait Timeout"); break # Timeout
                     time.sleep(0.1)
 
-            # Cleanup and Return Status
             if interrupted:
-                print("Stopping playback due to interrupt.")
-                audio_handler.stop_playback() # Stops player AND detector
+                print("\nStopping playback due to interrupt.")
+                audio_handler.stop_playback()
                 return ("INTERRUPTED", full_response_text)
             else:
-                print("Playback completed.")
-                audio_handler.detector.stop_interrupt_listener() # Stop only detector
-                audio_handler.player.wait_for_playback_complete(timeout=5)
+                print("\nPlayback completed.")
+                audio_handler.detector.stop_interrupt_listener()
+                # audio_handler.player.wait_for_playback_complete(timeout=5) # Less critical now?
                 return ("COMPLETED", full_response_text)
 
         except AttributeError as e:
-            print(f"Error accessing TTS/Audio components: {e}. Was initialization successful?")
+            print(f"\nError accessing TTS/Audio components in _speak: {e}.")
             traceback.print_exc()
-            # Attempt cleanup even if components were problematic
             if 'audio_handler' in locals() and audio_handler: audio_handler.stop_playback()
             return ("ERROR", str(e))
         except Exception as e:
-            print(f"\nError in speak method: {e}")
+            print(f"\nError in _speak method: {e}")
             traceback.print_exc()
             if 'audio_handler' in locals() and audio_handler: audio_handler.stop_playback()
             return ("ERROR", str(e)) 
 
-    def interaction_loop(self, duration=None, timeout=10, phrase_limit=10):
-        """Core interaction loop using component manager."""
+    # Renamed from Alpaca.interaction_loop
+    def run_single_interaction(self, duration=None, timeout=10, phrase_limit=10):
+        """Runs a single listen -> process -> speak cycle."""
         audio_handler = self.component_manager.audio_handler
         try:
-            # Stop any playback before listening
-            if audio_handler:
-                 # Check player status directly
-                 if audio_handler.player.is_playing:
-                      print("Stopping playback before new interaction loop...")
-                      audio_handler.stop_playback()
-                      # Wait briefly for stop command to take effect
-                      time.sleep(0.1) 
-            else:
-                 print("Warning: Audio handler not available at start of interaction loop.")
-                 # Cannot proceed without audio handler
+            # Stop any playback before listening (moved from interaction_loop start)
+            if audio_handler and audio_handler.player.is_playing:
+                 print("Stopping playback before new interaction...")
+                 audio_handler.stop_playback()
+                 time.sleep(0.1) # Allow stop to propagate
+            elif not audio_handler:
+                 print("Error: Audio handler not available for interaction.")
                  return "ERROR", "Audio handler not initialized."
 
-            # Listen for user input
+            # 1. Listen
             print("\nListening for your voice...")
-            transcribed_text = self.listen(duration=duration, timeout=timeout)
-
+            transcribed_text = self._listen(duration=duration, timeout=timeout)
+            
             # Handle listen errors
             if transcribed_text in ["TIMEOUT_ERROR", "low_energy", "", "ERROR", None]:
                  ai_response_text = f"Sorry, I encountered an issue: {transcribed_text}. Please try again."
                  if transcribed_text in ["TIMEOUT_ERROR", "low_energy", ""]:
                       ai_response_text = f"I didn't quite catch that ({transcribed_text or 'no input'}). Could you please repeat?"
-                 print("\nAssistant:", ai_response_text)
-                 return "", ai_response_text 
+                 print("\nassistant:", ai_response_text)
+                 # Return the error status, and the generated message
+                 return (transcribed_text or "ERROR"), ai_response_text 
 
             # --- Process valid input ---
             print(f"\nYou: {transcribed_text}")
+            # 2. Add user message to history
             self.conversation_manager.add_user_message(transcribed_text)
 
-            # Get response from LLM
-            print("\nAssistant thinking...")
-            response_source = self.process_and_respond()
+            # 3. Process and get response
+            print("\nassistant thinking...")
+            response_source = self._process_and_respond()
 
-            # Speak the response
-            speak_status, ai_response_text = self.speak(response_source)
+            # 4. Speak
+            speak_status, ai_response_text = self._speak(response_source)
 
-            # Add assistant response to history
+            # 5. Add assistant message to history
             if ai_response_text:
-                self.conversation_manager.add_assistant_message(ai_response_text)
+                 self.conversation_manager.add_assistant_message(ai_response_text)
 
-            # Handle speak status
-            if speak_status == "INTERRUPTED":
-                return "INTERRUPTED", ai_response_text 
-            elif speak_status == "ERROR":
-                 # Error message might be in ai_response_text from speak
-                return "ERROR", ai_response_text 
-            # DISABLED and COMPLETED cases fall through
-
-            return transcribed_text, ai_response_text
+            # Handle speak status - INTERRUPTED, ERROR, DISABLED, COMPLETED
+            if speak_status in ["INTERRUPTED", "ERROR"]:
+                 print(f"(Interaction ended with status: {speak_status})")
+            # Return the status from speak, and the full text spoken/generated
+            return speak_status, ai_response_text
 
         except Exception as e:
-            print(f"\nError in interaction loop: {str(e)}")
+            print(f"\nCritical error in interaction handler: {e}")
             traceback.print_exc()
-            if audio_handler:
-                 audio_handler.stop_playback()
-            return "ERROR", str(e)
-
-    def main_loop(self):
-        """The main loop calling interaction_loop and handling cleanup via ComponentManager."""
-        print(f"Starting main loop with timeout={self._timeout_arg}, phrase_limit={self._phrase_limit_arg}, duration={self._duration_arg}")
-        try:
-            while True:
-                user_input_status, assistant_output = self.interaction_loop(
-                    duration=self._duration_arg,
-                    timeout=self._timeout_arg,
-                    phrase_limit=self._phrase_limit_arg
-                )
-                if user_input_status == "ERROR":
-                    print(f"Recovering from interaction error: {assistant_output}")
-                    time.sleep(2)
-                elif user_input_status == "INTERRUPTED":
-                     print("Interaction interrupted, starting new loop.")
-
-        except KeyboardInterrupt:
-             print("\nExiting Voice Assistant...")
-        finally:
-            print("Performing final cleanup via ComponentManager...")
-            if hasattr(self, 'component_manager') and self.component_manager:
-                 self.component_manager.cleanup()
-            # Also cleanup conversation manager if needed (though less critical)
-            if hasattr(self, 'conversation_manager'):
-                 del self.conversation_manager
-                 self.conversation_manager = None
-            gc.collect()
-            print("Cleanup complete.")
-            
+            if audio_handler: audio_handler.stop_playback()
+            return "ERROR", str(e) 

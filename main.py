@@ -1,13 +1,16 @@
-from src.core.voice_assistant import VoiceAssistant
+from src.core.alpaca import Alpaca
 from src.utils.config_loader import ConfigLoader
 from src.rag.importdocs import importdocs
 import sys
+import time # Needed for sleep in error recovery
+import traceback
 
 def main():
-    print("Initializing AI Voice Assistant...")
+    print("Initializing AI Voice assistant...")
+    assistant = None # Initialize assistant to None for finally block
     
-    # Run importdocs.py first (ensure ChromaDB is populated)
     try:
+        # Run importdocs.py first 
         print("Running document import/check...")
         importdocs()
         print("Document import/check complete.")
@@ -22,30 +25,50 @@ def main():
          print("Failed to load configurations. Exiting.")
          sys.exit(1)
 
-    # Initialize the voice assistant with loaded parameters
-    # VoiceAssistant constructor now accepts all necessary params
     try:
-         assistant = VoiceAssistant(**assistant_params)
-    except Exception as e:
-         print(f"Fatal error initializing VoiceAssistant: {e}")
-         import traceback
-         traceback.print_exc()
-         sys.exit(1)
+         # Initialize the voice assistant core (which initializes managers and handlers)
+         assistant = Alpaca(**assistant_params)
 
-    # Start the main interaction loop (no longer needs args passed here)
-    try:
-         assistant.main_loop()
+         # Extract loop parameters (consider making these instance vars of Alpaca if preferred)
+         duration = assistant.duration_arg
+         timeout = assistant.timeout_arg
+         phrase_limit = assistant.phrase_limit_arg
+
+         print(f"Starting main loop with timeout={timeout}, phrase_limit={phrase_limit}, duration={duration}")
+
+         # --- Main Interaction Loop --- 
+         while True:
+              # Call the interaction handler's method
+              user_input_status, assistant_output = assistant.interaction_handler.run_single_interaction(
+                   duration=duration,
+                   timeout=timeout,
+                   phrase_limit=phrase_limit
+              )
+              
+              # Handle interaction status
+              if user_input_status == "ERROR":
+                   print(f"Recovering from interaction error: {assistant_output}")
+                   time.sleep(2)
+              elif user_input_status == "INTERRUPTED":
+                   print("Interaction interrupted, starting new loop.")
+              # COMPLETED/DISABLED/etc. statuses just continue the loop
+
+    except KeyboardInterrupt:
+         print("\nKeyboard interrupt detected. Exiting...")
     except Exception as e:
-         print(f"An unexpected error occurred in the main loop: {e}")
-         import traceback
+         print(f"\nAn unexpected fatal error occurred in the main execution: {e}")
          traceback.print_exc()
-         # Attempt cleanup even after main loop error
-         if assistant and hasattr(assistant, 'component_manager'):
-              print("Attempting cleanup after main loop error...")
-              assistant.component_manager.cleanup()
     finally:
-         # The main cleanup is now handled within VoiceAssistant.main_loop's finally block
-         print("AI Voice Assistant shutting down.")
+         # --- Cleanup --- 
+         print("Performing final cleanup...")
+         # Use ComponentManager for handler cleanup via Alpaca instance
+         if assistant and hasattr(assistant, 'component_manager'):
+              assistant.component_manager.cleanup()
+         # Optional: Explicitly delete ConversationManager if needed
+         if assistant and hasattr(assistant, 'conversation_manager'):
+              del assistant.conversation_manager
+              
+         print("AI Voice assistant shut down.")
 
 if __name__ == "__main__":
     main()
