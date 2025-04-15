@@ -12,7 +12,8 @@ generated_audio/
 *.so
 .vscode/
 
-
+._*
+.wav
 .mov
 .pt
 # Distribution / packaging
