@@ -11,14 +11,14 @@ from ..utils.component_manager import ComponentManager       # Corrected path as
 from ..utils.conversation_manager import ConversationManager # Corrected path assumed
 from ..utils.helper_functions import split_into_sentences, should_use_rag
 
-class InteractionHandler:
+class AlpacaInteraction:
     def __init__(self, component_manager: ComponentManager, conversation_manager: ConversationManager):
         """Initializes the handler with necessary managers."""
         if not component_manager or not conversation_manager:
              raise ValueError("ComponentManager and ConversationManager are required.")
         self.component_manager = component_manager
         self.conversation_manager = conversation_manager
-        print("InteractionHandler initialized.")
+        print("AlpacaInteraction initialized.")
 
     # Renamed from Alpaca.listen
     def _listen(self, duration=None, timeout=None):
@@ -27,7 +27,7 @@ class InteractionHandler:
         transcriber = self.component_manager.transcriber
         
         if not audio_handler or not transcriber:
-             print("Error: Audio Handler or Transcriber not available in InteractionHandler.")
+             print("Error: Audio Handler or Transcriber not available in AlpacaInteraction.")
              return "ERROR"
 
         try:
@@ -72,7 +72,7 @@ class InteractionHandler:
         """Process text with LLM using history and ComponentManager handlers."""
         llm_handler = self.component_manager.llm_handler
         if not llm_handler:
-             print("Error: LLM Handler not available in InteractionHandler.")
+             print("Error: LLM Handler not available in AlpacaInteraction.")
              def error_gen(): yield "LLM Handler not available."
              return error_gen()
              

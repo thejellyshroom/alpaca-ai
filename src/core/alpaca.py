@@ -1,7 +1,7 @@
 from ..utils.helper_functions import *
 from ..utils.conversation_manager import ConversationManager
 from ..utils.component_manager import ComponentManager
-from .alpaca_interaction import InteractionHandler
+from .alpaca_interaction import AlpacaInteraction
 import time
 import gc # Needed for garbage collection
 
@@ -28,7 +28,7 @@ class Alpaca:
         self.component_manager = ComponentManager(asr_config, tts_config, llm_config)
         
         # Initialize Interaction Handler, passing the managers
-        self.interaction_handler = InteractionHandler(self.component_manager, self.conversation_manager)
+        self.interaction_handler = AlpacaInteraction(self.component_manager, self.conversation_manager)
 
         # Store loop parameters (originating from ConfigLoader -> main.py)
         # These might be passed directly to interaction_handler.run_single_interaction in main.py
@@ -40,7 +40,7 @@ class Alpaca:
         # Summary is printed by ComponentManager
         
     # --- All functional methods (listen, process, speak, loops) are removed --- 
-    # --- Logic is now in InteractionHandler or main.py --- 
+    # --- Logic is now in AlpacaInteraction or main.py --- 
 
     # Potential future methods: 
     # - Methods to reload specific components? (e.g., reload_tts())
