@@ -21,7 +21,6 @@ models/
 # Distribution / packaging
 .Python
 build/
-data/
 assets/
 develop-eggs/
 dist/
