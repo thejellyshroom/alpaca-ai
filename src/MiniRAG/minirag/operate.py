@@ -30,6 +30,11 @@ from .base import (
     TextChunkSchema,
     QueryParam,
 )
+#use simplified prompt
+# from .prompt_simplified import PROMPTS
+# from .prompt import GRAPH_FIELD_SEP
+
+#use detailed prompt
 from .prompt import GRAPH_FIELD_SEP, PROMPTS
 
 
@@ -271,7 +276,7 @@ async def extract_entities(
 
         # --- DEBUG LOGGING START ---
         print(f"\n[DEBUG] Calling LLM for entity extraction for chunk: {chunk_key}")
-        # print(f"[DEBUG] Prompt: {hint_prompt}") # Optional: Print the full prompt if needed, can be long
+        print(f"[DEBUG] Prompt: {hint_prompt}")
         # --- DEBUG LOGGING END ---
 
         final_result = await use_llm_func(hint_prompt)

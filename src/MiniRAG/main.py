@@ -14,7 +14,7 @@ from transformers import AutoModel, AutoTokenizer # Keep for embedding
 from datetime import datetime
 
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-EXTRACTION_LLM_MODEL = "gemma3:4b"
+EXTRACTION_LLM_MODEL = "llama3.2:3b"
 QUERY_LLM_MODEL = "gemma3:4b"
 
 import argparse
@@ -38,7 +38,7 @@ WORKING_DIR = args.workingdir
 DATA_PATH = args.datapath
 # QUERY_PATH = args.querypath # Not used in this simplified script anymore
 # OUTPUT_PATH = args.outputpath # Not used in this simplified script anymore
-print("USING EXTRACTION LLM (Ollama):", EXTRACTION_LLM_MODEL) # Updated log
+print("USING EXTRACTION LLM (HF):", EXTRACTION_LLM_MODEL) # Changed log to HF
 print("USING QUERY LLM (Ollama):", QUERY_LLM_MODEL)
 print("USING WORKING DIR:", WORKING_DIR)
 
@@ -46,15 +46,20 @@ print("USING WORKING DIR:", WORKING_DIR)
 if not os.path.exists(WORKING_DIR):
     os.mkdir(WORKING_DIR)
 
-# --- Instance 1: For Extraction (using Ollama Model) ---
+# --- Instance 1: For Extraction (using Ollama Model - iodose/nuextract) ---
 print(f"\n--- Initializing MiniRAG for Extraction ({EXTRACTION_LLM_MODEL}) ---")
 rag_extractor = MiniRAG(
     working_dir=WORKING_DIR,
     llm_model_func=ollama_model_complete, # Use Ollama function
-    llm_model_max_token_size=200, # May not be relevant for Ollama
-    llm_model_max_async=1, # Set concurrency for Ollama
+    # llm_model_func=hf_model_complete, # Use HF function
+    # llm_model_name=EXTRACTION_LLM_MODEL, # Pass model name directly for HF
+    # llm_model_max_token_size=200, # Check if relevant for MiniCPM
+    # llm_model_max_async=1, # Adjust concurrency if needed for HF model
+    # llm_model_kwargs={"device_map": "auto"}, # Try automatic device placement
     # llm_model_name=EXTRACTION_LLM_MODEL, # Not used for Ollama func
-    llm_model_kwargs={"ollama_model": EXTRACTION_LLM_MODEL}, # Pass Ollama model name via kwargs
+    llm_model_max_token_size=200, # Check if relevant
+    llm_model_max_async=1, # Adjust concurrency if needed
+    llm_model_kwargs={"ollama_model": EXTRACTION_LLM_MODEL}, # Pass model name via kwargs for Ollama
     embedding_func=EmbeddingFunc(
         embedding_dim=384,
         max_token_size=1000,
@@ -106,6 +111,9 @@ print("\n--- Indexing Phase Complete ---")
 
 # Cleanup extractor instance (optional, helps release memory if large models were loaded)
 del rag_extractor 
+
+# Ensure working directory exists before initializing querier (Fix for FileNotFoundError)
+os.makedirs(WORKING_DIR, exist_ok=True)
 
 # --- Instance 2: For Querying (using Ollama Model) ---
 print(f"\n--- Initializing MiniRAG for Querying ({QUERY_LLM_MODEL}) ---")
