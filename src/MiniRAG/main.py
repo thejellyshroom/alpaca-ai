@@ -14,7 +14,7 @@ from transformers import AutoModel, AutoTokenizer # Keep for embedding
 from datetime import datetime
 
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-EXTRACTION_LLM_MODEL = "llama3.2:3b"
+EXTRACTION_LLM_MODEL = "llama3.1"
 QUERY_LLM_MODEL = "gemma3:4b"
 
 import argparse
