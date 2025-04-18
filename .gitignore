@@ -13,9 +13,9 @@ generated_audio/
 .vscode/
 
 ._*
-.wav
-.mov
-.pt
+*.wav
+*.mov
+*.pt
 data/
 models/
 # Distribution / packaging
