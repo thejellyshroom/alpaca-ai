@@ -16,7 +16,7 @@ generated_audio/
 .wav
 .mov
 .pt
-rag_data/
+data/
 models/
 # Distribution / packaging
 .Python

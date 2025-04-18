@@ -2,6 +2,7 @@
 # your_token = "INPUT YOUR TOKEN HERE"
 # login(your_token)
 
+import json
 import os
 from minirag import MiniRAG, QueryParam
 from minirag.llm.hf import (
@@ -46,6 +47,14 @@ print("USING WORKING DIR:", WORKING_DIR)
 if not os.path.exists(WORKING_DIR):
     os.mkdir(WORKING_DIR)
 
+# Path to the KV store file
+KV_STORE_PATH = os.path.join(WORKING_DIR, "doc_status.json")
+if os.path.exists(KV_STORE_PATH):
+    with open(KV_STORE_PATH, "r", encoding="utf-8") as kv_file:
+        doc_status = json.load(kv_file)
+else:
+    doc_status = {}
+
 # --- Instance 1: For Extraction (using Ollama Model - iodose/nuextract) ---
 print(f"\n--- Initializing MiniRAG for Extraction ({EXTRACTION_LLM_MODEL}) ---")
 rag_extractor = MiniRAG(
@@ -71,8 +80,21 @@ rag_extractor = MiniRAG(
     ),
 )
 
-# --- Indexing Phase (using rag_extractor) ---
+# --- Indexing Phase (using rag_extractor). will be indexed ---
 print("\n--- Starting Indexing Phase ---")
+
+# --- Log file for processed documents ---
+processed_log_path = os.path.join(WORKING_DIR, "processed_files.log")
+processed_files = set()
+if os.path.exists(processed_log_path):
+    try:
+        with open(processed_log_path, 'r') as log_f:
+            processed_files = set(line.strip() for line in log_f)
+        print(f"Loaded {len(processed_files)} processed file paths from {processed_log_path}")
+    except Exception as e:
+        print(f"Warning: Could not read processed files log at {processed_log_path}: {e}")
+# --- End log file handling ---
+
 def find_txt_files(root_path):
     txt_files = []
     for root, dirs, files in os.walk(root_path):
@@ -88,24 +110,32 @@ def find_txt_files(root_path):
                 print(f"[Info] Skipping hidden/metadata file: {os.path.join(root, file)}")
     return txt_files
 
-
 WEEK_LIST = find_txt_files(DATA_PATH)
 print(f"Found {len(WEEK_LIST)} files to process: {WEEK_LIST}")
 for i, WEEK in enumerate(WEEK_LIST):
-    id = WEEK_LIST.index(WEEK) # Or simply use i
+    # Check if the file has already been processed
+    if doc_status.get(WEEK, {}).get("status") == "processed":
+        print(f"[Info] Skipping already processed file: {WEEK}")
+        continue
+
     print(f"--- Processing file {i}/{len(WEEK_LIST)}: {WEEK} ---")
     try:
         print(f"[{datetime.now()}] Reading file... {WEEK}")
-        with open(WEEK) as f: # Consider adding encoding='latin-1' if needed again
+        with open(WEEK, "r", encoding="utf-8") as f:
             content = f.read()
         print(f"[{datetime.now()}] Starting rag_extractor.insert for file {i}...")
-        rag_extractor.insert(content) # Use the extractor instance
+        rag_extractor.insert(content)  # Use the extractor instance
         print(f"[{datetime.now()}] Finished rag_extractor.insert for file {i}.")
+
+        # Update the KV store with the processed status
+        doc_status[WEEK] = {"status": "processed", "timestamp": str(datetime.now())}
+        with open(KV_STORE_PATH, "w", encoding="utf-8") as kv_file:
+            json.dump(doc_status, kv_file, indent=4)
+
     except Exception as e:
         print(f"Error processing file {WEEK}: {e}")
         # Optionally continue to the next file or break
-        # continue
-        break # Stop on error for now
+        break  # Stop on error for now
 
 print("\n--- Indexing Phase Complete ---")
 
@@ -137,7 +167,7 @@ rag_querier = MiniRAG(
     # We assume the index/graph already exists, no need to re-insert
 )
 
-# --- Querying Phase (using rag_querier) ---
+# --- Querying Phase ---
 print("\n--- Starting Query Phase ---")
 # A toy query
 query = "Who did Lihua get lunch with?" # Test query

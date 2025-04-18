@@ -1,7 +1,7 @@
 {
   "default": {
     "tts_name": "kokoro",
-    "model_id": "hexgrad/Kokoro-82M",
+    "model": "hexgrad/Kokoro-82M",
     "kokoro": {
       "available_voices": [
         "af_heart", "af_alloy", "af_aoede", "af_bella", "af_jessica", 
@@ -14,7 +14,7 @@
       "sample_rate": 24000,
       "expressiveness": 1.0,
       "variability": 0.2,
-      "sentence_silence": 0.2
+      "sentence_silence": 0.0
     }
   }
 }

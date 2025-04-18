@@ -1,22 +1,20 @@
 from src.core.alpaca import Alpaca
 from src.utils.config_loader import ConfigLoader
-from src.rag.importdocs import importdocs
 import sys
 import time # Needed for sleep in error recovery
 import traceback
+from dotenv import load_dotenv
 
 def main():
+    # Load environment variables from .env file first
+    load_dotenv()
     print("Initializing AI Voice assistant...")
     assistant = None # Initialize assistant to None for finally block
     
-    try:
-        # Run importdocs.py first 
-        print("Running document import/check...")
-        importdocs()
-        print("Document import/check complete.")
-    except Exception as e:
-        print(f"Error during document import: {e}. RAG features might be affected.")
-
+    # import rag documents and configureation before everything.
+    # either that, or do minirag indexing at the end when user closes the program
+    
+    
     # Load configurations using ConfigLoader
     config_loader = ConfigLoader()
     assistant_params = config_loader.load_all()
@@ -67,7 +65,7 @@ def main():
          # Optional: Explicitly delete ConversationManager if needed
          if assistant and hasattr(assistant, 'conversation_manager'):
               del assistant.conversation_manager
-              
+          
          print("AI Voice assistant shut down.")
 
 if __name__ == "__main__":

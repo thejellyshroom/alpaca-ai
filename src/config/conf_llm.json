@@ -1,8 +1,8 @@
 {
     "default": {
         "llm_local": true,
-        "model_name": "gemma3:4b",
-        "creativity_presets": ["low", "medium", "high", "random"],
+        "model": "gemma3:4b",
+        "system_prompt": "Default system prompt from conf_llm.json.",
         "local": {
             "llm_path": "",
             "chat_format": "llama-3",

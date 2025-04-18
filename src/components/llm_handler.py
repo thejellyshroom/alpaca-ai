@@ -7,6 +7,10 @@ class LLMHandler:
     def __init__(self, model_name='gemma3:4b', config=None):
         self.model_name = model_name
         
+        # Extract model name from config if available
+        if config and 'model' in config:
+            self.model_name = config['model']
+        
         # Default parameters for text generation running locally
         local_config = config.get('local', {})
         # create parameters to send to ollama
@@ -19,7 +23,15 @@ class LLMHandler:
             'repeat_penalty': local_config.get('repeat_penalty')
         }
         
-        self.rag_collection = self.init_rag()
+        self.rag_collection = None # Initialize to None
+        try:
+            print("Attempting to initialize RAG connection...")
+            self.rag_collection = self.init_rag()
+            if self.rag_collection:
+                 print("RAG collection initialized successfully.")
+        except Exception as e:
+            print(f"Warning: Failed to initialize RAG connection: {e}")
+            print("LLM Handler will operate without RAG capabilities.")
         
     def init_rag(self):
         # Initialize ChromaDB client and get collection

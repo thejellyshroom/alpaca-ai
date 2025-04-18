@@ -1,7 +1,7 @@
 {
   "default": {
     "asr_name": "faster-whisper",
-    "model_id": "Systran/faster-whisper-small",
+    "model": "Systran/faster-whisper-small",
     "faster-whisper": {
       "device": "cpu",
       "compute_type": "int8",

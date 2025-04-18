@@ -69,35 +69,23 @@ class AlpacaInteraction:
 
     # Renamed from Alpaca.process_and_respond
     def _process_and_respond(self):
-        """Process text with LLM using history and ComponentManager handlers."""
+        """Processes the current conversation and decides whether to use RAG."""
         llm_handler = self.component_manager.llm_handler
         if not llm_handler:
-             print("Error: LLM Handler not available in AlpacaInteraction.")
-             def error_gen(): yield "LLM Handler not available."
+             print("Error: LLM Handler not available.")
+             def error_gen(): yield "Error: LLM Handler not available."; return
              return error_gen()
-             
-        current_history = self.conversation_manager.get_history()
-        if not current_history:
-            print("Error: Conversation history is empty.")
-            def error_gen(): yield "Conversation history is empty."
-            return error_gen()
+        
+        conversation_history = self.conversation_manager.get_history()
+        last_user_message = conversation_history[-1]['content'] if conversation_history and conversation_history[-1]['role'] == 'user' else ""
 
-        query_message = current_history[-1]
-        query_content = query_message.get("content", "")
-        previous_history = current_history[:-1]
-
-        try:
-            # Use RAG for knowledge-based queries
-            if should_use_rag(query_content):
-                response = llm_handler.get_rag_response(query_content, previous_history)
-            else:
-                response = llm_handler.get_response(current_history)
-            return response
-        except Exception as e:
-            print(f"Error getting response from LLM Handler: {e}")
-            traceback.print_exc()
-            def error_gen(): yield f"Error communicating with LLM: {e}"
-            return error_gen()
+        # Check if RAG is available and configured
+        if llm_handler.rag_collection:
+            print("RAG connection available. Using get_rag_response.")
+            return llm_handler.get_rag_response(query=last_user_message, messages=conversation_history)
+        else:
+            print("RAG connection not available. Using standard get_response.")
+            return llm_handler.get_response(messages=conversation_history)
 
     # Renamed from Alpaca.speak
     def _speak(self, response_source):

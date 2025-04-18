@@ -2,12 +2,10 @@
 
 import json
 import os
-import argparse
 
 class ConfigLoader:
     def __init__(self):
         """Initialize the config loader."""
-        self.args = None
         self.asr_config = None
         self.tts_config = None
         self.llm_config = None
@@ -41,90 +39,151 @@ class ConfigLoader:
             'llm': os.path.join(config_dir, 'conf_llm.json')
         }
 
-    def parse_arguments(self):
-        """Parse command line arguments using argparse."""
+    def load_configs_from_env(self):
+        """Load specific preset configs based on environment variables and apply overrides."""
+        print("Loading configurations based on environment variables...")
         default_paths = self.get_default_config_paths()
-        parser = argparse.ArgumentParser(description='AI Voice assistant')
-        
-        # assistant behavior args
-        parser.add_argument('--fixed-duration', type=int, help='Use fixed duration recording instead of dynamic listening')
-        parser.add_argument('--timeout', type=int, default=5, help='Maximum seconds to wait for speech before giving up')
-        parser.add_argument('--phrase-limit', type=int, default=10, help='Maximum seconds for a single phrase')
 
-        # Configuration file paths
-        parser.add_argument('--asr-config', type=str, default=default_paths.get('asr', ''), help='Path to ASR configuration file')
-        parser.add_argument('--tts-config', type=str, default=default_paths.get('tts', ''), help='Path to TTS configuration file')
-        parser.add_argument('--llm-config', type=str, default=default_paths.get('llm', ''), help='Path to LLM configuration file')
+        # Determine presets from environment variables (default to 'default')
+        asr_preset = os.getenv('ASR_PRESET', 'default')
+        tts_preset = os.getenv('TTS_PRESET', 'default')
+        llm_preset = os.getenv('LLM_PRESET', 'default')
+        print(f"Using presets - ASR: {asr_preset}, TTS: {tts_preset}, LLM: {llm_preset}")
 
-        # Preset selection
-        parser.add_argument('--asr-preset', type=str, default='default', help='ASR preset to use')
-        parser.add_argument('--tts-preset', type=str, default='default', help='TTS preset to use')
-        parser.add_argument('--llm-preset', type=str, default='default', help='LLM preset to use')
-
-        # Add system prompt argument
-        parser.add_argument('--system-prompt', type=str, default=None, help='Override the default system prompt for the LLM')
-
-        self.args = parser.parse_args()
-        print(f"Arguments parsed: {self.args}")
-
-    def load_configs_from_args(self):
-        """Load specific preset configs based on parsed arguments."""
-        if not self.args:
-            print("Error: Arguments not parsed yet. Call parse_arguments() first.")
-            return False
-        
-        print("Loading configurations based on arguments...")
-        
-        # Load ASR config
-        asr_conf_all = self.load_config_file(self.args.asr_config)
-        self.asr_config = asr_conf_all.get(self.args.asr_preset, {})
+        # --- Load ASR config ---
+        asr_config_path = default_paths.get('asr', '')
+        asr_conf_all = self.load_config_file(asr_config_path)
+        self.asr_config = asr_conf_all.get(asr_preset, {})
         if not self.asr_config:
-             print(f"Warning: ASR preset '{self.args.asr_preset}' not found in {self.args.asr_config}. Using empty config.")
+             print(f"Warning: ASR preset '{asr_preset}' not found in {asr_config_path}. Using empty config.")
+        # Apply ASR environment variable overrides
+        if 'ASR_MODEL' in os.environ:
+            print(f"Overriding ASR model from environment: {os.environ['ASR_MODEL']}")
+            self.asr_config['model'] = os.environ['ASR_MODEL']
 
-        # Load TTS config
-        tts_conf_all = self.load_config_file(self.args.tts_config)
-        self.tts_config = tts_conf_all.get(self.args.tts_preset, {})
+        # --- Specific ASR Parameter Overrides ---
+        asr_param_map = {
+            'ASR_ENERGY_THRESHOLD': ('audio_validation', 'energy_threshold', int),
+            'ASR_DEVICE': ('faster-whisper', 'device', str),
+            'ASR_COMPUTE_TYPE': ('faster-whisper', 'compute_type', str),
+            'ASR_MAX_RETRIES': ('audio_validation', 'max_retries', int),
+            'ASR_TIMEOUT': ('audio_validation', 'timeout', int)
+        }
+        for env_var, (section, key, type_converter) in asr_param_map.items():
+            if env_var in os.environ:
+                value_str = os.environ[env_var]
+                try:
+                    value = type_converter(value_str)
+                    if section in self.asr_config and isinstance(self.asr_config[section], dict):
+                        print(f"Overriding ASR config ['{section}']['{key}'] from env var {env_var}: {value}")
+                        self.asr_config[section][key] = value
+                        # Special case for energy_threshold: apply to recognizer too
+                        if env_var == 'ASR_ENERGY_THRESHOLD' and 'recognizer' in self.asr_config and isinstance(self.asr_config['recognizer'], dict):
+                             print(f"Applying ASR_ENERGY_THRESHOLD override to ['recognizer']['energy_threshold'] as well: {value}")
+                             self.asr_config['recognizer']['energy_threshold'] = value
+                    else:
+                        print(f"Warning: Cannot apply env var {env_var}. Section '{section}' not found or not a dictionary in ASR config.")
+                except ValueError:
+                    print(f"Warning: Invalid value '{value_str}' for env var {env_var}. Expected type {type_converter.__name__}. Ignoring override.")
+
+
+        # --- Load TTS config ---
+        tts_config_path = default_paths.get('tts', '')
+        tts_conf_all = self.load_config_file(tts_config_path)
+        self.tts_config = tts_conf_all.get(tts_preset, {})
         if not self.tts_config:
-             print(f"Warning: TTS preset '{self.args.tts_preset}' not found in {self.args.tts_config}. Using empty config.")
+             print(f"Warning: TTS preset '{tts_preset}' not found in {tts_config_path}. Using empty config.")
+        # Apply TTS environment variable overrides
+        if 'TTS_MODEL' in os.environ:
+             print(f"Overriding TTS model from environment: {os.environ['TTS_MODEL']}")
+             self.tts_config['model'] = os.environ['TTS_MODEL']
 
-        # Load LLM config
-        llm_conf_all = self.load_config_file(self.args.llm_config)
-        self.llm_config = llm_conf_all.get(self.args.llm_preset, {})
+        # --- Specific TTS Parameter Overrides (within 'kokoro' section) ---
+        if 'kokoro' in self.tts_config and isinstance(self.tts_config['kokoro'], dict):
+            tts_param_map = {
+                'TTS_SPEED': ('speed', float),
+                'TTS_EXPRESSIVENESS': ('expressiveness', float),
+                'TTS_VARIABILITY': ('variability', float),
+                'TTS_VOICE': ('voice', str)
+            }
+            for env_var, (key, type_converter) in tts_param_map.items():
+                if env_var in os.environ:
+                    value_str = os.environ[env_var]
+                    try:
+                        value = type_converter(value_str)
+                        print(f"Overriding TTS config ['kokoro']['{key}'] from env var {env_var}: {value}")
+                        self.tts_config['kokoro'][key] = value
+                    except ValueError:
+                         print(f"Warning: Invalid value '{value_str}' for env var {env_var}. Expected type {type_converter.__name__}. Ignoring override.")
+        elif any(env_var in os.environ for env_var in ['TTS_SPEED', 'TTS_EXPRESSIVENESS', 'TTS_VARIABILITY', 'TTS_VOICE']):
+             print("Warning: Cannot apply TTS parameter overrides. Section 'kokoro' not found or not a dictionary in TTS config.")
+
+        # --- Load LLM config ---
+        llm_config_path = default_paths.get('llm', '')
+        llm_conf_all = self.load_config_file(llm_config_path)
+        self.llm_config = llm_conf_all.get(llm_preset, {})
         if not self.llm_config:
-             print(f"Warning: LLM preset '{self.args.llm_preset}' not found in {self.args.llm_config}. Using empty config.")
-             
-        # Override system prompt if provided via args
-        if self.args.system_prompt:
-             print(f"Overriding system prompt from args: '{self.args.system_prompt[:50]}...'")
+             print(f"Warning: LLM preset '{llm_preset}' not found in {llm_config_path}. Using empty config.")
+        # Apply LLM environment variable overrides (Model, API Base, System Prompt)
+        if 'QUERY_LLM_MODEL' in os.environ:
+             raw_model_name = os.environ['QUERY_LLM_MODEL']
+             # Clean the model name: strip whitespace, remove quotes, remove comments
+             cleaned_model_name = raw_model_name.split('#')[0].strip().strip('"').strip("'")
+             print(f"Overriding LLM model from environment (Raw: '{raw_model_name}', Cleaned: '{cleaned_model_name}')")
+             self.llm_config['model'] = cleaned_model_name
+        if 'LLM_API_BASE' in os.environ:
+             # Assuming API base doesn't typically have comments/quotes, but strip whitespace
+             cleaned_api_base = os.environ['LLM_API_BASE'].strip()
+             print(f"Overriding LLM API base from environment: {cleaned_api_base}")
+             self.llm_config['api_base'] = cleaned_api_base
+        # SYSTEM_PROMPT env var override (takes priority over JSON)
+        if 'SYSTEM_PROMPT' in os.environ:
+             raw_system_prompt = os.environ['SYSTEM_PROMPT']
+             # Clean the system prompt: strip whitespace, remove quotes
+             cleaned_system_prompt = raw_system_prompt.strip().strip('"').strip("'")
+             print(f"Overriding system prompt from environment (Raw: '{raw_system_prompt[:50]}...', Cleaned: '{cleaned_system_prompt[:50]}...')")
              # Ensure llm_config exists before modifying
              if not isinstance(self.llm_config, dict):
                  self.llm_config = {}
-             self.llm_config['system_prompt'] = self.args.system_prompt
-             
-        print("Configurations loaded.")
+             self.llm_config['system_prompt'] = cleaned_system_prompt
+
+
+        print("Configurations loaded and environment overrides applied.")
         return True
-        
+
     def get_assistant_parameters(self):
-        """Prepare parameters needed by Alpaca based on loaded configs/args."""
-        if not self.args or self.asr_config is None or self.tts_config is None or self.llm_config is None:
-             print("Error: Arguments/Configs not loaded properly.")
+        """Prepare parameters needed by Alpaca based on loaded configs and environment variables."""
+        if self.asr_config is None or self.tts_config is None or self.llm_config is None:
+             print("Error: Configs not loaded properly. Call load_configs_from_env() first.")
              return None
-         
-        # Parameters for Alpaca __init__ and main_loop
+
+        # Load assistant behavior parameters from environment variables with defaults
+        try:
+            duration_str = os.getenv('FIXED_DURATION')
+            duration = int(duration_str) if duration_str else None # None means dynamic duration
+            timeout = int(os.getenv('TIMEOUT', '5')) # Default 5 seconds
+            phrase_limit = int(os.getenv('PHRASE_LIMIT', '10')) # Default 10 seconds
+            print(f"Assistant parameters - Duration: {duration}, Timeout: {timeout}, Phrase Limit: {phrase_limit}")
+        except ValueError as e:
+            print(f"Warning: Invalid integer value in environment for TIMEOUT or PHRASE_LIMIT: {e}. Using defaults.")
+            duration = None # Default to dynamic on error too
+            timeout = 5
+            phrase_limit = 10
+
+        # Parameters for Alpaca __init__
         params = {
              'asr_config': self.asr_config,
              'tts_config': self.tts_config,
              'llm_config': self.llm_config,
-             'duration': self.args.fixed_duration,
-             'timeout': self.args.timeout,
-             'phrase_limit': self.args.phrase_limit
+             'duration': duration,
+             'timeout': timeout,
+             'phrase_limit': phrase_limit
         }
         self.assistant_params = params
         return params
 
     def load_all(self):
-        """Parse args and load all configurations. Returns assistant parameters."""
-        self.parse_arguments()
-        if not self.load_configs_from_args():
+        """Load all configurations from env/JSON. Returns assistant parameters."""
+        if not self.load_configs_from_env():
              return None # Config loading failed
         return self.get_assistant_parameters() 
