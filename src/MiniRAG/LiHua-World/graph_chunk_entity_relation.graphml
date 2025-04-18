@@ -1,0 +1,15 @@
+<?xml version='1.0' encoding='utf-8'?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd"><key id="d2" for="node" attr.name="source_id" attr.type="string"/>
+<key id="d1" for="node" attr.name="description" attr.type="string"/>
+<key id="d0" for="node" attr.name="entity_type" attr.type="string"/>
+<graph edgedefault="undirected"><node id="&quot;LIHUA&quot;">
+  <data key="d0">"ORGANIZATION"</data>
+  <data key="d1">"LiHua is a person who initiates a meeting with WolfgangSchulz."&lt;SEP&gt;"LiHua is involved in a social event/meeting"</data>
+  <data key="d2">chunk-94f1957a4c4702d0bf22093282360a0b</data>
+</node>
+<node id="&quot;WOLFGANGSCHULZ&quot;">
+  <data key="d0">"PERSON"</data>
+  <data key="d1">"WolfgangSchulz is a person who meets with LiHua."</data>
+  <data key="d2">chunk-94f1957a4c4702d0bf22093282360a0b</data>
+</node>
+</graph></graphml>
