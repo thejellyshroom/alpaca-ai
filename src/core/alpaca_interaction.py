@@ -9,7 +9,6 @@ import threading
 # Adjust imports based on your final structure
 from ..utils.component_manager import ComponentManager       # Corrected path assumed
 from ..utils.conversation_manager import ConversationManager # Corrected path assumed
-from ..utils.helper_functions import split_into_sentences, should_use_rag
 
 class AlpacaInteraction:
     def __init__(self, component_manager: ComponentManager, conversation_manager: ConversationManager):
@@ -20,7 +19,6 @@ class AlpacaInteraction:
         self.conversation_manager = conversation_manager
         print("AlpacaInteraction initialized.")
 
-    # Renamed from Alpaca.listen
     def _listen(self, duration=None, timeout=None):
         """Record audio and transcribe it using ComponentManager handlers."""
         audio_handler = self.component_manager.audio_handler
@@ -67,7 +65,6 @@ class AlpacaInteraction:
             traceback.print_exc()
             return "ERROR"
 
-    # Renamed from Alpaca.process_and_respond
     def _process_and_respond(self):
         """Processes the current conversation and decides whether to use RAG."""
         llm_handler = self.component_manager.llm_handler
@@ -87,7 +84,6 @@ class AlpacaInteraction:
             print("RAG connection not available. Using standard get_response.")
             return llm_handler.get_response(messages=conversation_history)
 
-    # Renamed from Alpaca.speak
     def _speak(self, response_source):
         """Convert text to speech using ComponentManager handlers."""
         tts_handler = self.component_manager.tts_handler
@@ -109,12 +105,10 @@ class AlpacaInteraction:
         interrupted = False
         full_response_text = ""
         tts_buffer = ""
-        # Include comma and semicolon as chunk triggers
         sentence_ends = (".", "!", "?", "\n", ",", ";", "–")
         initial_words_spoken = False
         word_count = 0
         approx_words_for_initial_chunk = 8
-        # min_chunk_len is no longer needed for the primary logic after initial chunk
 
         try:
             print("Assistant:", end="", flush=True)
@@ -162,19 +156,6 @@ class AlpacaInteraction:
                          if audio_array is not None and len(audio_array) > 0:
                              audio_handler.player.play_audio(audio_array, sample_rate)
                      except Exception as e: print(f"\nError synthesizing final segment: {e}")
-            elif isinstance(response_source, str):
-                full_response_text = response_source 
-                print(full_response_text)
-                sentences = split_into_sentences(full_response_text)
-                for sentence in sentences:
-                    if interrupt_event.is_set(): interrupted = True; break
-                    try:
-                        audio_array, sample_rate = tts_handler.synthesize(sentence)
-                        if interrupt_event.is_set(): interrupted = True; break
-                        if audio_array is not None and len(audio_array) > 0:
-                            audio_handler.player.play_audio(audio_array, sample_rate)
-                            time.sleep(0.1)
-                    except Exception as e: print(f"\nError synthesizing sentence: {e}"); time.sleep(0.1)
             else:
                  print(f"\nError: _speak received unexpected type: {type(response_source)}")
                  audio_handler.detector.stop_interrupt_listener()

@@ -5,8 +5,6 @@ from ..components.audio_handler import AudioHandler
 from ..components.stt_handler import Transcriber
 from ..components.llm_handler import LLMHandler
 from ..components.tts_handler import TTSHandler
-from .helper_functions import unload_component
-import torch
 import traceback
 import gc
 
@@ -37,11 +35,22 @@ class ComponentManager:
         print("--- All Components Loaded ---\n")
         # Print summary after loading
         self._print_component_summary()
+        
+    def unload_component(self, component_obj, component_name):
+        if component_obj:
+            print(f"Unloading existing {component_name}...")
+            del component_obj
+            gc.collect()
+            print(f"{component_name} unloaded successfully.")
+            return None
+        else:
+            print(f"No existing {component_name} found")
+            return None
 
     def load_audio_handler(self):
         """Load the audio handler component."""
         print("Loading Audio Handler...")
-        self.audio_handler = unload_component(self.audio_handler, "audio_handler")
+        self.audio_handler = self.unload_component(self.audio_handler, "audio_handler")
         try:
             # Pass only the ASR config as it contains relevant audio params
             self.audio_handler = AudioHandler(config=self.asr_config)
@@ -54,7 +63,7 @@ class ComponentManager:
     def load_stt(self):
         """Load the transcription (STT) component."""
         print("Loading STT Handler (Transcriber)...")
-        self.transcriber = unload_component(self.transcriber, "transcriber")
+        self.transcriber = self.unload_component(self.transcriber, "transcriber")
         try:
             model_id = self.asr_config.get('model_id', 'Unknown ASR Model')
             print(f"Initializing transcriber with config for model: {model_id}")
@@ -85,7 +94,7 @@ class ComponentManager:
     def load_tts_handler(self):
         """Load the TTS handler."""
         print("Loading TTS Handler...")
-        self.tts_handler = unload_component(self.tts_handler, "tts_handler")
+        self.tts_handler = self.unload_component(self.tts_handler, "tts_handler")
         self.tts_enabled = False # Assume disabled until loaded
         try:
             # Pass the TTS config

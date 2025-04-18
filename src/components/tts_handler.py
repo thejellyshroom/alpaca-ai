@@ -202,14 +202,5 @@ class TTSHandler:
             return np.zeros(0, dtype=np.float32)
     
     def _split_into_sentences(self, text):
-        """Split text into sentences for better processing.
-        
-        Args:
-            text (str): Text to split
-            
-        Returns:
-            list: List of sentences
-        """
-        # Simple sentence splitting based on common punctuation
         sentences = re.split(r'(?<=[.!?])\s+', text)
         return sentences 
