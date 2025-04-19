@@ -1097,44 +1097,47 @@ async def naive_query(
     global_config: dict,
 ):
     use_model_func = global_config["llm_model_func"]
-    results = await chunks_vdb.query(query, top_k=query_param.top_k)
-    if not len(results):
-        return PROMPTS["fail_response"]
-    chunks_ids = [r["id"] for r in results]
+    results = await chunks_vdb.query(query=query, top_k=query_param.top_k)
+    if not results:
+        logger.info("No relevant text chunks found for the naive query.")
+        # Return None instead of the hardcoded fail response
+        return None
 
-    chunks = await text_chunks_db.get_by_ids(chunks_ids)
-
-    maybe_trun_chunks = truncate_list_by_token_size(
-        chunks,
-        key=lambda x: x["content"],
-        max_token_size=query_param.max_token_for_text_unit,
+    # --- Reinstated Logic Start ---
+    # Get the actual chunk data from the KV store
+    chunk_ids = [r["id"] for r in results]
+    chunk_data_list = await asyncio.gather(
+        *[text_chunks_db.get_by_id(cid) for cid in chunk_ids]
     )
-    logger.info(f"Truncate {len(chunks)} to {len(maybe_trun_chunks)} chunks")
-    section = "--New Chunk--\n".join([c["content"] for c in maybe_trun_chunks])
-    if query_param.only_need_context:
-        return section
+
+    # Filter out any None results (if a chunk ID wasn't found)
+    valid_chunks = [
+        chunk["content"] for chunk in chunk_data_list if chunk and "content" in chunk
+    ]
+
+    if not valid_chunks:
+        logger.warning(
+            f"Found chunk IDs in VDB {chunk_ids} but couldn't retrieve content from KV store."
+        )
+        return None
+
+    # Combine the content of the retrieved chunks
+    context_data = "\n\n".join(valid_chunks)
+
+    # Format the response using the naive RAG prompt
     sys_prompt_temp = PROMPTS["naive_rag_response"]
     sys_prompt = sys_prompt_temp.format(
-        content_data=section, response_type=query_param.response_type
+        content_data=context_data, response_type=query_param.response_type
     )
+
+    # Call the LLM with the retrieved context
     response = await use_model_func(
         query,
         system_prompt=sys_prompt,
     )
-
-    if len(response) > len(sys_prompt):
-        response = (
-            response[len(sys_prompt) :]
-            .replace(sys_prompt, "")
-            .replace("user", "")
-            .replace("model", "")
-            .replace(query, "")
-            .replace("<system>", "")
-            .replace("</system>", "")
-            .strip()
-        )
-
+    logger.info("Successfully generated response using naive RAG context.")
     return response
+    # --- Reinstated Logic End ---
 
 
 async def path2chunk(

@@ -101,28 +101,53 @@ class LLMHandler:
              yield f"[Error communicating with base LLM: {e}]" # Yield error message
                 
     def get_rag_response(self, query: str, messages: list[Dict[str, Any]]) -> Generator[str, None, None]:
-        """Get a response using the MiniRAG querier instance."""
+        """Get a response using the MiniRAG querier instance, falling back to base LLM if no context found."""
         if not self.rag_querier:
             print("Error: get_rag_response called but RAG querier is not available.")
             yield "[Internal Error: RAG is not available]"
             return
+        
+        # Extract system prompt from messages history (assuming it's the first message)
+        system_prompt = "You are a helpful assistant." # Default fallback
+        if messages and messages[0]["role"] == "system":
+             system_prompt = messages[0]["content"]
+             print(f"[Debug RAG] Extracted system prompt for RAG query: '{system_prompt[:60]}...'")
+        else:
+             print("[Debug RAG] No system prompt found in messages, using default.")
+
+        # Create QueryParam with the extracted system prompt
+        rag_param = QueryParam(mode="naive", system_prompt=system_prompt)
             
-        print(f"Using RAG Querier (LLM: {self.query_llm_model})")
+        print(f"Using RAG Querier (LLM: {self.query_llm_model}) with mode '{rag_param.mode}'")
         try:
-            # MiniRAG handles context retrieval and prompting internally via query()
-            # Use the non-streaming query() method which returns a string
             answer = self.rag_querier.query(
                 query, 
-                param=QueryParam(mode="naive") # <-- Change mode to naive
+                param=rag_param
             )
-            # Yield the complete answer character by character to feed the streaming TTS logic
+            
+            # ---> Reintroduce Fallback Logic <--- 
+            if answer is None:
+                 print("RAG query returned None (no context found). Falling back to base LLM.")
+                 rag_failure_note = {
+                     "role": "system", 
+                     "content": "(Self-Correction: My knowledge base didn\'t have specific information for that query. Answering from general knowledge.)"
+                 }
+                 modified_messages = messages + [rag_failure_note]
+                 # Call the standard get_response with the modified history
+                 yield from self.get_response(messages=modified_messages)
+                 return # Stop this generator
+            # ---> End Fallback Logic <--- 
+
+            # RAG query succeeded, yield the answer char by char (as reverted)
+            print("RAG query successful. Yielding answer character by character...")
             if answer:
                  for char in answer:
                      yield char
             else:
-                 yield "[RAG query returned no answer]"
+                 # Handle case where RAG returns empty string (not None)
+                 yield "[RAG query returned an empty answer]"
                 
         except Exception as e:
-            print(f"\nError during MiniRAG query: {e}")
+            print(f"\nError during MiniRAG query execution: {e}")
             traceback.print_exc()
             yield f"[Error during RAG query: {e}]"
