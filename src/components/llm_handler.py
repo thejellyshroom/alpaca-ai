@@ -30,9 +30,7 @@ class LLMHandler:
 
         # --- RAG Initialization ---
         self.rag_querier = None
-        # Clean the ENABLE_RAG value before checking
         enable_rag_str = os.getenv('ENABLE_RAG', 'false')
-        # Assume ConfigLoader's _clean_env_var is not available here, so do basic clean
         cleaned_enable_rag_str = enable_rag_str.split('#')[0].strip().strip('"').strip("'").lower()
         self.rag_enabled = cleaned_enable_rag_str == 'true'
 
@@ -40,7 +38,7 @@ class LLMHandler:
             print("RAG is enabled. Attempting to initialize MiniRAG querier...")
             # Load RAG-specific config from environment
             self.working_dir = os.getenv('WORKING_DIR')
-            raw_query_llm_model = os.getenv('QUERY_LLM_MODEL') # Read raw value
+            raw_query_llm_model = os.getenv('QUERY_LLM_MODEL')
             self.embedding_model = os.getenv('EMBEDDING_MODEL')
             llm_max_token = int(os.getenv('LLM_MAX_TOKEN_SIZE', '200'))
             llm_max_async = int(os.getenv('LLM_MAX_ASYNC', '1'))
@@ -51,7 +49,6 @@ class LLMHandler:
                  self.query_llm_model = raw_query_llm_model.split('#')[0].strip().strip('"').strip("'")
                  print(f"Cleaned QUERY_LLM_MODEL: '{self.query_llm_model}' (from '{raw_query_llm_model}')")
 
-            # Validate required RAG vars (use the cleaned query model name)
             required_rag_vars = {'WORKING_DIR': self.working_dir, 
                                  'QUERY_LLM_MODEL': self.query_llm_model, 
                                  'EMBEDDING_MODEL': self.embedding_model}
@@ -61,25 +58,18 @@ class LLMHandler:
                 print(f"Warning: Cannot initialize RAG. Missing env vars: {missing_vars}. RAG disabled.")
                 self.rag_enabled = False
             else:
-                print(f"RAG Config - Working Dir: {self.working_dir}")
-                print(f"RAG Config - Query LLM: {self.query_llm_model}")
-                print(f"RAG Config - Embedding Model: {self.embedding_model}")
-                
-                # Initialize Embedding Function for RAG
                 rag_embedding_func = setup_embedding_func(self.embedding_model)
                 
                 if rag_embedding_func:
                     try:
-                        # Initialize MiniRAG for Querying
                         self.rag_querier = MiniRAG(
                             working_dir=self.working_dir,
                             llm_model_func=ollama_model_complete, # Use Ollama for querying
                             llm_model_max_token_size=llm_max_token, # Use RAG settings
                             llm_model_max_async=llm_max_async,
-                            llm_model_kwargs={"ollama_model": self.query_llm_model}, # Pass Ollama query model name
+                            llm_model_kwargs={"ollama_model": self.query_llm_model},
                             embedding_func=rag_embedding_func,
                         )
-                        print("MiniRAG Querier initialized successfully.")
                     except Exception as e:
                         print(f"Error initializing MiniRAG Querier: {e}")
                         traceback.print_exc()
@@ -127,7 +117,6 @@ class LLMHandler:
             )
             # Yield the complete answer character by character to feed the streaming TTS logic
             if answer:
-                 print("\n[Debug RAG] Yielding RAG answer character by character...") # DEBUG
                  for char in answer:
                      yield char
             else:

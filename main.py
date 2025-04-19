@@ -20,8 +20,6 @@ def main():
     print("Initializing AI Voice assistant...")
     assistant = None # Initialize assistant to None for finally block
     
-    # --- Run RAG Indexing First ---
-    # Execute the indexing process
     try:
         print("--- Running RAG Indexing --- ")
         run_indexing() # This will load .env internally

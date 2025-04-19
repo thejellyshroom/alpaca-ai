@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import gc
+import traceback
 from minirag import MiniRAG
 from minirag.llm.ollama import ollama_model_complete
 from minirag.llm.hf import hf_embed
@@ -186,10 +187,3 @@ def run_indexing():
     del rag_extractor
     gc.collect()
     print("Indexer instance cleaned up.")
-
-if __name__ == "__main__":
-    # Add helper imports needed within functions if not already global
-    import traceback 
-    # Explicitly import hf_embed if it's used only inside setup_embedding_func's lambda
-    # Assuming hf_embed is defined globally as above
-    run_indexing() 
