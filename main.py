@@ -1,9 +1,18 @@
+import sys
+import os
+
+project_root = os.path.dirname(os.path.abspath(__file__))
+rag_path = os.path.join(project_root, 'src', 'rag')
+if rag_path not in sys.path:
+    sys.path.insert(0, rag_path)
+
 from src.core.alpaca import Alpaca
 from src.utils.config_loader import ConfigLoader
 import sys
 import time # Needed for sleep in error recovery
 import traceback
 from dotenv import load_dotenv
+from src.rag.indexer import run_indexing
 
 def main():
     # Load environment variables from .env file first
@@ -11,10 +20,20 @@ def main():
     print("Initializing AI Voice assistant...")
     assistant = None # Initialize assistant to None for finally block
     
-    # import rag documents and configureation before everything.
-    # either that, or do minirag indexing at the end when user closes the program
-    
-    
+    # --- Run RAG Indexing First ---
+    # Execute the indexing process
+    try:
+        print("--- Running RAG Indexing --- ")
+        run_indexing() # This will load .env internally
+        print("--- RAG Indexing Complete --- \n")
+    except Exception as e:
+        print(f"***** CRITICAL ERROR DURING RAG INDEXING *****: {e}")
+        print("***** RAG features may be unavailable or outdated. *****")
+        traceback.print_exc()
+        # Decide if you want to exit or continue without updated RAG
+        # sys.exit(1) 
+    # --- End RAG Indexing ---
+
     # Load configurations using ConfigLoader
     config_loader = ConfigLoader()
     assistant_params = config_loader.load_all()

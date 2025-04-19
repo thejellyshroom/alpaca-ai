@@ -113,7 +113,7 @@ class ComponentManager:
         """Prints a summary of loaded components and their main settings."""
         print("--- Component Summary ---")
         # STT / Transcriber
-        stt_model = self.asr_config.get('model_id', 'N/A')
+        stt_model = self.asr_config.get('model', 'N/A')
         print(f"Transcription model: {stt_model}")
         device_info = "Unknown Device"
         if self.transcriber:
@@ -126,7 +126,7 @@ class ComponentManager:
         print(f"STT Device: {device_info}")
         
         # TTS
-        tts_model = self.tts_config.get('model_id', 'N/A')
+        tts_model = self.tts_config.get('model', 'N/A')
         kokoro_conf = self.tts_config.get('kokoro', {})
         tts_voice = kokoro_conf.get('voice', 'N/A')
         tts_speed = kokoro_conf.get('speed', 'N/A')

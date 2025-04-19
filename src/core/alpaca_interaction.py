@@ -77,11 +77,12 @@ class AlpacaInteraction:
         last_user_message = conversation_history[-1]['content'] if conversation_history and conversation_history[-1]['role'] == 'user' else ""
 
         # Check if RAG is available and configured
-        if llm_handler.rag_collection:
-            print("RAG connection available. Using get_rag_response.")
+        if llm_handler.rag_querier: # Check for the initialized MiniRAG querier instance
+            print("RAG querier available. Using get_rag_response.")
+            # Pass the last user message as the query
             return llm_handler.get_rag_response(query=last_user_message, messages=conversation_history)
         else:
-            print("RAG connection not available. Using standard get_response.")
+            print("RAG not available or disabled. Using standard get_response.")
             return llm_handler.get_response(messages=conversation_history)
 
     def _speak(self, response_source):
@@ -141,21 +142,40 @@ class AlpacaInteraction:
                         tts_buffer = ""
                         word_count = 0
                         try:
+                            # >>> Synthesis happens here <<<
+                            print(f"\n[Debug TTS] Synthesizing chunk: '{chunk_to_speak[:50]}...'") # DEBUG
                             audio_array, sample_rate = tts_handler.synthesize(chunk_to_speak)
+                            print(f"[Debug TTS] Synthesis result: type={type(audio_array)}, len={len(audio_array) if audio_array is not None else 'N/A'}, sample_rate={sample_rate}") # DEBUG
+
+                            # Check for interrupt *after* synthesis but *before* playback
                             if interrupt_event.is_set(): interrupted = True; break
+
+                            # >>> Playback happens here <<<
                             if audio_array is not None and len(audio_array) > 0:
+                                print(f"[Debug TTS] Calling play_audio for chunk.") # DEBUG
                                 audio_handler.player.play_audio(audio_array, sample_rate)
-                                time.sleep(0.05)
+                                time.sleep(0.05) # Small sleep after initiating playback
+                            else:
+                                print(f"[Debug TTS] Skipping play_audio due to invalid audio_array.") # DEBUG
+
                         except Exception as e:
-                             print(f"\nError during TTS synthesis for chunk: {e}")
+                             print(f"\nError during TTS synthesis/playback for chunk: {e}") # Updated error message
                              time.sleep(0.1)
                 print()
+                # Also add logging for the final buffer synthesis/playback
                 if not interrupted and tts_buffer.strip():
                      try:
-                         audio_array, sample_rate = tts_handler.synthesize(tts_buffer.strip())
+                         final_chunk = tts_buffer.strip()
+                         print(f"\n[Debug TTS] Synthesizing final chunk: '{final_chunk[:50]}...'") # DEBUG
+                         audio_array, sample_rate = tts_handler.synthesize(final_chunk)
+                         print(f"[Debug TTS] Final Synthesis result: type={type(audio_array)}, len={len(audio_array) if audio_array is not None else 'N/A'}, sample_rate={sample_rate}") # DEBUG
                          if audio_array is not None and len(audio_array) > 0:
+                             print(f"[Debug TTS] Calling play_audio for final chunk.") # DEBUG
                              audio_handler.player.play_audio(audio_array, sample_rate)
-                     except Exception as e: print(f"\nError synthesizing final segment: {e}")
+                         else:
+                             print(f"[Debug TTS] Skipping play_audio for final chunk due to invalid audio_array.") # DEBUG
+                     except Exception as e: 
+                          print(f"\nError synthesizing/playing final segment: {e}") # Updated error message
             else:
                  print(f"\nError: _speak received unexpected type: {type(response_source)}")
                  audio_handler.detector.stop_interrupt_listener()
@@ -189,7 +209,6 @@ class AlpacaInteraction:
             if 'audio_handler' in locals() and audio_handler: audio_handler.stop_playback()
             return ("ERROR", str(e)) 
 
-    # Renamed from Alpaca.interaction_loop
     def run_single_interaction(self, duration=None, timeout=10, phrase_limit=10):
         """Runs a single listen -> process -> speak cycle."""
         audio_handler = self.component_manager.audio_handler

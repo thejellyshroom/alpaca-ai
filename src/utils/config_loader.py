@@ -106,17 +106,25 @@ class ConfigLoader:
 
         # Load assistant behavior parameters from environment variables with defaults
         try:
-            duration_str = os.getenv('FIXED_DURATION')
-            # Handle empty string for duration as None
-            duration = int(duration_str) if duration_str and duration_str.strip() else None 
-            timeout = int(os.getenv('TIMEOUT', '5')) # Default 5 seconds
-            phrase_limit = int(os.getenv('PHRASE_LIMIT', '10')) # Default 10 seconds
+            duration_str = self._clean_env_var(os.getenv('FIXED_DURATION'), remove_comments=True)
+            timeout_str = self._clean_env_var(os.getenv('TIMEOUT', '5'), remove_comments=True)
+            phrase_limit_str = self._clean_env_var(os.getenv('PHRASE_LIMIT', '10'), remove_comments=True)
+            
+            duration = int(duration_str) if duration_str else None # None means dynamic duration
+            timeout = int(timeout_str) # Default 5 seconds
+            phrase_limit = int(phrase_limit_str) # Default 10 seconds
+            
             print(f"Assistant parameters - Duration: {duration}, Timeout: {timeout}, Phrase Limit: {phrase_limit}")
         except ValueError as e:
-            print(f"Warning: Invalid integer value in environment for TIMEOUT or PHRASE_LIMIT: {e}. Using defaults.")
+            print(f"Warning: Invalid integer value in environment for DURATION, TIMEOUT or PHRASE_LIMIT after cleaning. Using defaults. Error: {e}")
             duration = None # Default to dynamic on error too
             timeout = 5
             phrase_limit = 10
+        except Exception as e:
+             print(f"Warning: Unexpected error reading assistant behavior env vars. Using defaults. Error: {e}")
+             duration = None
+             timeout = 5
+             phrase_limit = 10
 
         # Parameters for Alpaca __init__
         params = {

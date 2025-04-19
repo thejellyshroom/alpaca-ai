@@ -1,19 +1,23 @@
 import ollama
 from typing import Dict, Any, Generator
 import random
-import sys, chromadb, ollama
+import os
+import sys
+import traceback
+
+# RAG Imports
+from minirag import MiniRAG, QueryParam
+from minirag.llm.ollama import ollama_model_complete
+from indexer import *
 
 class LLMHandler:
-    def __init__(self, model_name='gemma3:4b', config=None):
-        self.model_name = model_name
+    def __init__(self, config=None):
+        """Initialize LLM Handler, including RAG querier if enabled."""
+        config = config or {}
+        self.model_name = config.get('model', 'gemma3:4b') # Get base model from main config
         
-        # Extract model name from config if available
-        if config and 'model' in config:
-            self.model_name = config['model']
-        
-        # Default parameters for text generation running locally
+        # Text generation parameters from main config
         local_config = config.get('local', {})
-        # create parameters to send to ollama
         self.params = {
             'temperature': local_config.get('temperature'),
             'top_p': local_config.get('top_p'),
@@ -22,79 +26,109 @@ class LLMHandler:
             'n_ctx': local_config.get('n_ctx'),
             'repeat_penalty': local_config.get('repeat_penalty')
         }
-        
-        self.rag_collection = None # Initialize to None
-        try:
-            print("Attempting to initialize RAG connection...")
-            self.rag_collection = self.init_rag()
-            if self.rag_collection:
-                 print("RAG collection initialized successfully.")
-        except Exception as e:
-            print(f"Warning: Failed to initialize RAG connection: {e}")
-            print("LLM Handler will operate without RAG capabilities.")
-        
-    def init_rag(self):
-        # Initialize ChromaDB client and get collection
-        chromaclient = chromadb.HttpClient(host="localhost", port=8000)
-        collection = chromaclient.get_collection(name="jellyshroom")
-        return collection
+        print(f"LLM Handler initialized for base model: {self.model_name}")
 
+        # --- RAG Initialization ---
+        self.rag_querier = None
+        # Clean the ENABLE_RAG value before checking
+        enable_rag_str = os.getenv('ENABLE_RAG', 'false')
+        # Assume ConfigLoader's _clean_env_var is not available here, so do basic clean
+        cleaned_enable_rag_str = enable_rag_str.split('#')[0].strip().strip('"').strip("'").lower()
+        self.rag_enabled = cleaned_enable_rag_str == 'true'
 
-    def get_response(self, messages: list[Dict[str, Any]]) -> Generator[str, None, None]:
-        """Get a streaming response from the LLM using conversation history.
-        Yields:
-            str: Chunks of the LLM's response as they are generated
-        """
-        # Log the generation parameters being used
-        print(f"Using LLM parameters: {self.params}")
-        
-        # Call Ollama with our parameters
-        response = ollama.chat(
-            model=self.model_name, 
-            messages=messages,
-            stream=True,
-            options=self.params
-        )
-        
-        for chunk in response:
-            if 'message' in chunk and 'content' in chunk['message']:
-                yield chunk['message']['content']
+        if self.rag_enabled:
+            print("RAG is enabled. Attempting to initialize MiniRAG querier...")
+            # Load RAG-specific config from environment
+            self.working_dir = os.getenv('WORKING_DIR')
+            raw_query_llm_model = os.getenv('QUERY_LLM_MODEL') # Read raw value
+            self.embedding_model = os.getenv('EMBEDDING_MODEL')
+            llm_max_token = int(os.getenv('LLM_MAX_TOKEN_SIZE', '200'))
+            llm_max_async = int(os.getenv('LLM_MAX_ASYNC', '1'))
+            
+            # Clean the query model name
+            self.query_llm_model = None
+            if raw_query_llm_model:
+                 self.query_llm_model = raw_query_llm_model.split('#')[0].strip().strip('"').strip("'")
+                 print(f"Cleaned QUERY_LLM_MODEL: '{self.query_llm_model}' (from '{raw_query_llm_model}')")
+
+            # Validate required RAG vars (use the cleaned query model name)
+            required_rag_vars = {'WORKING_DIR': self.working_dir, 
+                                 'QUERY_LLM_MODEL': self.query_llm_model, 
+                                 'EMBEDDING_MODEL': self.embedding_model}
+            missing_vars = [name for name, value in required_rag_vars.items() if not value]
+            
+            if missing_vars:
+                print(f"Warning: Cannot initialize RAG. Missing env vars: {missing_vars}. RAG disabled.")
+                self.rag_enabled = False
+            else:
+                print(f"RAG Config - Working Dir: {self.working_dir}")
+                print(f"RAG Config - Query LLM: {self.query_llm_model}")
+                print(f"RAG Config - Embedding Model: {self.embedding_model}")
                 
-
+                # Initialize Embedding Function for RAG
+                rag_embedding_func = setup_embedding_func(self.embedding_model)
+                
+                if rag_embedding_func:
+                    try:
+                        # Initialize MiniRAG for Querying
+                        self.rag_querier = MiniRAG(
+                            working_dir=self.working_dir,
+                            llm_model_func=ollama_model_complete, # Use Ollama for querying
+                            llm_model_max_token_size=llm_max_token, # Use RAG settings
+                            llm_model_max_async=llm_max_async,
+                            llm_model_kwargs={"ollama_model": self.query_llm_model}, # Pass Ollama query model name
+                            embedding_func=rag_embedding_func,
+                        )
+                        print("MiniRAG Querier initialized successfully.")
+                    except Exception as e:
+                        print(f"Error initializing MiniRAG Querier: {e}")
+                        traceback.print_exc()
+                        print("RAG disabled due to MiniRAG initialization error.")
+                        self.rag_querier = None
+                        self.rag_enabled = False
+                else:
+                     print("RAG disabled due to embedding function setup error.")
+                     self.rag_enabled = False
+        else:
+            print("RAG is disabled via ENABLE_RAG environment variable.")
+        
+    def get_response(self, messages: list[Dict[str, Any]]) -> Generator[str, None, None]:
+        """Get a streaming response from the base LLM."""
+        print(f"Using Base LLM '{self.model_name}' with params: {self.params}")
+        try:
+            response = ollama.chat(
+                model=self.model_name, 
+                messages=messages,
+                stream=True,
+                options=self.params
+            )
+            for chunk in response:
+                if 'message' in chunk and 'content' in chunk['message']:
+                    yield chunk['message']['content']
+        except Exception as e:
+             print(f"\nError during Ollama chat with base model: {e}")
+             traceback.print_exc()
+             yield f"[Error communicating with base LLM: {e}]" # Yield error message
+                
     def get_rag_response(self, query: str, messages: list[Dict[str, Any]]) -> Generator[str, None, None]:
-        """Get a streaming response from the LLM using RAG.
-        
-        Args:
-            query (str): The user's query
-            messages (list): Conversation history
-        Yields:
-            str: Chunks of the LLM's response as they are generated
-        """
-        
-        # Get embedding for the query
-        query_embedding = ollama.embed(model="nomic-embed-text", input=query)['embeddings']
-        
-        # Retrieve relevant documents
-        results = self.rag_collection.query(
-            query_embeddings=query_embedding,
-            n_results=5  # Get top 5 most relevant documents
-        )
-        
-        # Combine retrieved documents
-        context = "\n\n".join(results['documents'][0])
-
-        rag_prompt = f"""Context information is below.
-                    ---------------------
-                    {context}
-                    ---------------------
-                    {query}
-                    """
-
-        # Add RAG prompt to messages
-        rag_messages = messages.copy()
-        rag_messages.append({"role": "user", "content": rag_prompt})
-
-        # Get response using the enhanced context and yield its chunks
-        response_generator = self.get_response(rag_messages)
-        for chunk in response_generator:
-             yield chunk
+        """Get a response using the MiniRAG querier instance."""
+        if not self.rag_querier:
+            print("Error: get_rag_response called but RAG querier is not available.")
+            yield "[Internal Error: RAG is not available]"
+            return
+            
+        print(f"Using RAG Querier (LLM: {self.query_llm_model})")
+        try:
+            # MiniRAG handles context retrieval and prompting internally via query()
+            # Use the non-streaming query() method which returns a string
+            answer = self.rag_querier.query(
+                query, 
+                param=QueryParam(mode="mini") # Or other modes as needed
+            )
+            # Yield the complete answer as a single chunk to match generator expectation
+            yield answer 
+                
+        except Exception as e:
+            print(f"\nError during MiniRAG query: {e}")
+            traceback.print_exc()
+            yield f"[Error during RAG query: {e}]"
