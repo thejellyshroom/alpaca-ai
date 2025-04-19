@@ -123,10 +123,15 @@ class LLMHandler:
             # Use the non-streaming query() method which returns a string
             answer = self.rag_querier.query(
                 query, 
-                param=QueryParam(mode="mini") # Or other modes as needed
+                param=QueryParam(mode="naive") # <-- Change mode to naive
             )
-            # Yield the complete answer as a single chunk to match generator expectation
-            yield answer 
+            # Yield the complete answer character by character to feed the streaming TTS logic
+            if answer:
+                 print("\n[Debug RAG] Yielding RAG answer character by character...") # DEBUG
+                 for char in answer:
+                     yield char
+            else:
+                 yield "[RAG query returned no answer]"
                 
         except Exception as e:
             print(f"\nError during MiniRAG query: {e}")
