@@ -53,8 +53,6 @@ def find_txt_files(root_path):
 
 # Make run_indexing async
 async def run_indexing():
-    """Main async function to run the indexing process."""
-    print("--- Starting MiniRAG Indexing Process ---")
     load_dotenv() # Load environment variables from .env
 
     # --- Configuration from Environment Variables ---
@@ -78,20 +76,13 @@ async def run_indexing():
         raw_extraction_model = EXTRACTION_LLM_MODEL
         EXTRACTION_LLM_MODEL = raw_extraction_model.split('#')[0].strip().strip('"').strip("'")
     print(f"EXTRACTION_LLM_MODEL: '{EXTRACTION_LLM_MODEL}'")
-    print(f"WORKING_DIR: {WORKING_DIR}")
-    print(f"DATA_PATH: {DATA_PATH}")
     print(f"EMBEDDING_MODEL: {EMBEDDING_MODEL}")
     print(f"EXTRACTION_LLM_MODEL: {EXTRACTION_LLM_MODEL}")
-    print(f"LLM_MAX_TOKEN_SIZE: {LLM_MAX_TOKEN_SIZE}")
     print(f"LLM_MAX_ASYNC: {LLM_MAX_ASYNC}")
     
-    # Ensure working directory exists
     os.makedirs(WORKING_DIR, exist_ok=True)
 
-    # --- Initialize Embedding Function ---
     embedding_func = setup_embedding_func(EMBEDDING_MODEL)
-
-    # --- Initialize MiniRAG for Extraction ---
     print(f"\n--- Initializing MiniRAG for Extraction ({EXTRACTION_LLM_MODEL}) ---")
     try:
         rag_extractor = MiniRAG(
@@ -102,7 +93,6 @@ async def run_indexing():
             llm_model_kwargs={"ollama_model": EXTRACTION_LLM_MODEL}, # Pass Ollama model name
             embedding_func=embedding_func,
         )
-        print("MiniRAG Extractor initialized.")
     except Exception as e:
         print(f"Error initializing MiniRAG Extractor: {e}")
         traceback.print_exc()
@@ -115,7 +105,6 @@ async def run_indexing():
         try:
             with open(kv_store_path, "r", encoding="utf-8") as kv_file:
                 doc_status = json.load(kv_file)
-            print(f"Loaded processing status for {len(doc_status)} files from {kv_store_path}")
         except json.JSONDecodeError:
              print(f"Warning: Could not decode JSON from {kv_store_path}. Starting with empty status.")
         except Exception as e:

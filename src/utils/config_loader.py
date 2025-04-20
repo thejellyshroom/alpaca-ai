@@ -131,6 +131,4 @@ class ConfigLoader:
 
     def load_all(self):
         """Load all configurations from env/JSON. Returns assistant parameters."""
-        if not self.load_configs_from_env():
-             return None # Config loading failed
         return self.get_assistant_parameters() 

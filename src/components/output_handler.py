@@ -6,24 +6,18 @@ import asyncio
 import sys
 from typing import Optional
 
-# Assuming managers and handlers are in sibling directories or utils
-# Adjust imports based on your final structure
 from ..utils.component_manager import ComponentManager
-# Import specific components for type hinting if needed
-from ..components.tts_handler import TTSHandler
-from ..components.audio_handler import AudioHandler
+from .tts_handler import TTSHandler
+from .audio_handler import AudioHandler
 
 class OutputHandler:
     """Handles converting LLM responses to speech and managing playback with interruptions."""
     
     def __init__(self, component_manager: ComponentManager):
         """Initializes the handler with the component manager."""
-        if not component_manager:
-             raise ValueError("ComponentManager is required for OutputHandler.")
         self.component_manager = component_manager
         print("OutputHandler initialized.")
         
-    # --- Helper for TTS chunk processing (moved from AlpacaInteraction) --- 
     def _process_tts_buffer(self, tts_buffer: str, initial_words_spoken: bool, interrupt_event: threading.Event) -> tuple[str, bool, bool]:
         """Determines if a chunk should be spoken, synthesizes/plays, returns updated buffer & state."""
         # Access components via the stored manager
@@ -111,8 +105,6 @@ class OutputHandler:
         
         try:
             print("Assistant:", end="", flush=True)
-            # Start the interrupt listener (assuming AudioHandler provides this)
-            # This relies on the reverted AudioHandler/InterruptDetector structure
             if hasattr(audio_handler, 'start_interrupt_listener'):
                  audio_handler.start_interrupt_listener(interrupt_event)
             else:
@@ -169,7 +161,6 @@ class OutputHandler:
             if not interrupted and tts_buffer.strip():
                  print(f"\n[OutputHandler] Processing final buffer: '{tts_buffer[:50]}...'")
                  try:
-                     # Use the helper for the final chunk too
                      _, _, chunk_interrupted = self._process_tts_buffer(tts_buffer.strip(), initial_words_spoken, interrupt_event)
                      if chunk_interrupted: interrupted = True
                  except Exception as e: 

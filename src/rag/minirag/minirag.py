@@ -108,8 +108,6 @@ def always_get_an_event_loop() -> asyncio.AbstractEventLoop:
         return current_loop
 
     except RuntimeError:
-        # If no event loop exists or it is closed, create a new one
-        logger.info("Creating a new event loop in main thread.")
         new_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(new_loop)
         return new_loop
@@ -204,14 +202,11 @@ class MiniRAG:
         set_logger(log_file)
         logger.setLevel(self.log_level)
 
-        logger.info(f"Logger initialized for working directory: {self.working_dir}")
         if not os.path.exists(self.working_dir):
-            logger.info(f"Creating working directory {self.working_dir}")
             os.makedirs(self.working_dir)
 
         # show config using self.global_config
         _print_config = ",\n  ".join([f"{k} = {v}" for k, v in self.global_config.items()])
-        logger.debug(f"MiniRAG init with effective config:\n  {_print_config}\n")
 
         # @TODO: should move all storage setup here to leverage initial start params attached to self.
 
@@ -243,7 +238,6 @@ class MiniRAG:
         )
 
         if not os.path.exists(self.working_dir):
-            logger.info(f"Creating working directory {self.working_dir}")
             os.makedirs(self.working_dir)
 
         self.llm_response_cache = (
@@ -497,7 +491,6 @@ class MiniRAG:
             list(to_process_docs.items())[i : i + self.max_parallel_insert]
             for i in range(0, len(to_process_docs), self.max_parallel_insert)
         ]
-        logger.info(f"Number of batches to process: {len(docs_batches)}")
 
         for batch_idx, docs_batch in enumerate(docs_batches):
             for doc_id, status_doc in docs_batch:
@@ -616,10 +609,6 @@ class MiniRAG:
             await self.entities_vdb.delete_entity(entity_name)
             await self.relationships_vdb.delete_relation(entity_name)
             await self.chunk_entity_relation_graph.delete_node(entity_name)
-
-            logger.info(
-                f"Entity '{entity_name}' and its relationships have been deleted."
-            )
             await self._delete_by_entity_done()
         except Exception as e:
             logger.error(f"Error while deleting entity '{entity_name}': {e}")

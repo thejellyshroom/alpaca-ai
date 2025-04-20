@@ -8,11 +8,9 @@ import asyncio # Add asyncio import
 import soundfile as sf 
 import sys # Ensure sys is imported if used elsewhere
 
-# Assuming managers and handlers are now in sibling directories or utils
-# Adjust imports based on your final structure
 from ..utils.component_manager import ComponentManager       # Corrected path assumed
 from ..utils.conversation_manager import ConversationManager # Corrected path assumed
-from .output_handler import OutputHandler # Import the new handler
+from ..components.output_handler import OutputHandler # Import the new handler
 
 class AlpacaInteraction:
     def __init__(self, component_manager: ComponentManager, conversation_manager: ConversationManager):
@@ -21,7 +19,6 @@ class AlpacaInteraction:
              raise ValueError("ComponentManager and ConversationManager are required.")
         self.component_manager = component_manager
         self.conversation_manager = conversation_manager
-        # Create the OutputHandler instance
         self.output_handler = OutputHandler(self.component_manager)
         print("AlpacaInteraction initialized.")
 
@@ -90,7 +87,6 @@ class AlpacaInteraction:
         conversation_history = self.conversation_manager.get_history()
         last_user_message = conversation_history[-1]['content'] if conversation_history and conversation_history[-1]['role'] == 'user' else ""
 
-        # Check if RAG is available and configured
         if llm_handler.rag_querier: # Check for the initialized MiniRAG querier instance
             print("RAG querier available.")
             return await llm_handler.get_rag_response(query=last_user_message, messages=conversation_history)
@@ -98,12 +94,10 @@ class AlpacaInteraction:
             print("RAG not available or disabled.")
             return llm_handler.get_response(messages=conversation_history) 
 
-    # Make run_single_interaction asynchronous
     async def run_single_interaction(self, duration=None, timeout=10, phrase_limit=10):
         """Runs a single listen -> process -> speak cycle asynchronously."""
         audio_handler = self.component_manager.audio_handler
         try:
-            # Stop any playback before listening (moved from interaction_loop start)
             if audio_handler and audio_handler.player.is_playing:
                  print("Stopping playback before new interaction...")
                  audio_handler.stop_playback()
@@ -112,8 +106,6 @@ class AlpacaInteraction:
                  print("Error: Audio handler not available for interaction.")
                  return "ERROR", "Audio handler not initialized."
 
-            # 1. Listen
-            print("\nListening for your voice...")
             transcribed_text = self._listen(duration=duration, timeout=timeout)
             
             # Handle listen errors
@@ -127,24 +119,14 @@ class AlpacaInteraction:
 
             # --- Process valid input ---
             print(f"\nYou: {transcribed_text}")
-            # 2. Add user message to history
             self.conversation_manager.add_user_message(transcribed_text)
-
-            # 3. Process and get response (NOW using await)
             print("\nAlpaca is thinking...")
             response_source = await self._process_and_respond() # Use await here
-
-            # 4. Speak (use the output_handler)
             speak_status, ai_response_text = await self.output_handler.speak(response_source)
-
-            # 5. Add assistant message to history
             if ai_response_text:
                  self.conversation_manager.add_assistant_message(ai_response_text)
-
-            # Handle speak status - INTERRUPTED, ERROR, DISABLED, COMPLETED
             if speak_status in ["INTERRUPTED", "ERROR"]:
                  print(f"(Interaction ended with status: {speak_status})")
-            # Return the status from speak, and the full text spoken/generated
             return speak_status, ai_response_text
 
         except Exception as e:

@@ -1,6 +1,5 @@
 import os
 
-
 ASR_OVERRIDE_MAP = {
     'ASR_MODEL':          {'key': 'model', 'type': str, 'clean': True, 'clean_comments': True},
     'ASR_DEVICE':         {'key': ('faster-whisper', 'device'), 'type': str, 'clean': True},

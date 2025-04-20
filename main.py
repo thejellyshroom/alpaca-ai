@@ -29,12 +29,9 @@ async def main():
     current_task = None # Variable to hold the current interaction task
     shutdown_requested = False # Flag for graceful shutdown
     
-    # --- Get DATA_PATH early --- 
     data_path_value = os.getenv("DATA_PATH", "./data/dataset") # Get path, provide default
     print(f"Using DATA_PATH: {data_path_value}")
-    # ---------------------------
     
-    # --- Define Signal Handler --- 
     def handle_shutdown_signal(*args):
         nonlocal shutdown_requested, current_task
         if not shutdown_requested:
