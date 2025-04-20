@@ -5,7 +5,6 @@ class ConversationManager:
         """Initialize the conversation history."""
         self.system_prompt = {"role": "system", "content": system_prompt}
         self.conversation_history = [self.system_prompt]
-        print(f"ConversationManager initialized with system prompt: '{system_prompt[:50]}...'")
 
     def add_user_message(self, text):
         """Add a user message to the history."""

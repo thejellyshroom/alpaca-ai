@@ -61,32 +61,24 @@ class ConfigLoader:
 
 
     def load_configs_from_env(self):
-        print("Loading configurations and applying environment overrides...")
-        
-        # 1. Get presets from environment
         asr_preset = os.getenv('ASR_PRESET', 'default')
         tts_preset = os.getenv('TTS_PRESET', 'default')
         llm_preset = os.getenv('LLM_PRESET', 'default')
-        print(f"Using presets - ASR: {asr_preset}, TTS: {tts_preset}, LLM: {llm_preset}")
 
-        # 2. Load base configs from JSON using presets
         self.asr_config = self._load_preset_config('asr', asr_preset)
         self.tts_config = self._load_preset_config('tts', tts_preset)
         self.llm_config = self._load_preset_config('llm', llm_preset)
         
-        # 4. Apply overrides using the helper method
         apply_overrides(self, self.asr_config, ASR_OVERRIDE_MAP)
         apply_overrides(self, self.tts_config, TTS_OVERRIDE_MAP)
         apply_overrides(self, self.llm_config, LLM_OVERRIDE_MAP)
 
-        # 5. Handle Special Cases (after general overrides)
         # ASR Energy Threshold link
         if 'ASR_ENERGY_THRESHOLD' in os.environ:
             try:
                 energy_val = int(os.environ['ASR_ENERGY_THRESHOLD']) # Already validated by _apply_overrides
                 recognizer_section = self.asr_config.get('recognizer')
                 if isinstance(recognizer_section, dict):
-                    print(f"Applying linked ASR_ENERGY_THRESHOLD override to ['recognizer']['energy_threshold']: {energy_val}")
                     recognizer_section['energy_threshold'] = energy_val
                 else:
                     pass
@@ -114,7 +106,6 @@ class ConfigLoader:
             timeout = int(timeout_str) # Default 5 seconds
             phrase_limit = int(phrase_limit_str) # Default 10 seconds
             
-            print(f"Assistant parameters - Duration: {duration}, Timeout: {timeout}, Phrase Limit: {phrase_limit}")
         except ValueError as e:
             print(f"Warning: Invalid integer value in environment for DURATION, TIMEOUT or PHRASE_LIMIT after cleaning. Using defaults. Error: {e}")
             duration = None # Default to dynamic on error too

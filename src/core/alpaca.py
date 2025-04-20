@@ -19,28 +19,15 @@ class Alpaca:
         tts_config = tts_config or {}
         llm_config = llm_config or {}
         
-        # Extract system prompt (could move to ConfigLoader)
         system_prompt = llm_config.get('system_prompt', "You are a helpful assistant.")
         self.conversation_manager = ConversationManager(system_prompt=system_prompt)
-
-        # Initialize Component Manager (which loads handlers)
         self.component_manager = ComponentManager(asr_config, tts_config, llm_config)
-        
-        # Initialize Interaction Handler, passing the managers
         self.interaction_handler = AlpacaInteraction(self.component_manager, self.conversation_manager)
 
-        # Store loop parameters (originating from ConfigLoader -> main.py)
-        # These might be passed directly to interaction_handler.run_single_interaction in main.py
         self.duration_arg = duration
         self.timeout_arg = timeout
         self.phrase_limit_arg = phrase_limit
         
-        print("\nAI Voice assistant Core Initialized and Ready!")
-        # Summary is printed by ComponentManager
-        
-    # --- All functional methods (listen, process, speak, loops) are removed --- 
-    # --- Logic is now in AlpacaInteraction or main.py --- 
-
     # Potential future methods: 
     # - Methods to reload specific components? (e.g., reload_tts())
     # - Methods to get status?

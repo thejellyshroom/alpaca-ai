@@ -26,23 +26,25 @@ async def main():
     load_dotenv()
     print("Initializing AI Voice assistant...")
     assistant = None # Initialize assistant to None for finally block
+    current_task = None # Variable to hold the current interaction task
+    shutdown_requested = False # Flag for graceful shutdown
     
     # --- Get DATA_PATH early --- 
     data_path_value = os.getenv("DATA_PATH", "./data/dataset") # Get path, provide default
     print(f"Using DATA_PATH: {data_path_value}")
     # ---------------------------
     
-    shutdown_requested = False # Flag for graceful shutdown
-    
     # --- Define Signal Handler --- 
     def handle_shutdown_signal(*args):
-        nonlocal shutdown_requested
+        nonlocal shutdown_requested, current_task
         if not shutdown_requested:
              print("\nShutdown signal received. Initiating graceful shutdown...")
              shutdown_requested = True
+             # Cancel the currently running interaction task, if any
+             if current_task and not current_task.done():
+                 current_task.cancel()
         else:
             print("Shutdown already in progress.")
-    # ---------------------------
 
     # --- RAG Indexing (Now awaited) --- 
     try:
@@ -53,11 +55,7 @@ async def main():
         print(f"***** CRITICAL ERROR DURING RAG INDEXING *****: {e}")
         print("***** RAG features may be unavailable or outdated. *****")
         traceback.print_exc()
-        # Decide if you want to exit or continue
-        # sys.exit(1) 
     # -----------------------------------
-
-    # Load configurations using ConfigLoader
     config_loader = ConfigLoader()
     assistant_params = config_loader.load_all()
 
@@ -66,46 +64,46 @@ async def main():
          sys.exit(1)
 
     try:
-         # Initialize the voice assistant core
          assistant = Alpaca(**assistant_params)
          
-         # Extract loop parameters (consider making these instance vars of Alpaca if preferred)
          duration = assistant.duration_arg
          timeout = assistant.timeout_arg
          phrase_limit = assistant.phrase_limit_arg
 
          # --- Register Signal Handler --- 
          loop = asyncio.get_running_loop()
-         # Register the handler for SIGINT (Ctrl+C)
-         # May need to handle SIGTERM too for other shutdown scenarios
          loop.add_signal_handler(signal.SIGINT, handle_shutdown_signal)
-         print("Signal handler registered. Press Ctrl+C for graceful shutdown.")
-         # ----------------------------- 
-
-         print(f"Starting main loop with timeout={timeout}, phrase_limit={phrase_limit}, duration={duration}")
 
          # --- Main Interaction Loop --- 
-         while not shutdown_requested: # Loop until flag is set by signal handler
+         while not shutdown_requested:
+              if current_task and not current_task.done():
+                   await asyncio.sleep(0.5) # Wait briefly before starting new task
+                   continue
+                   
               try:
-                  # Use await to call the async interaction handler
-                  user_input_status, assistant_output = await assistant.interaction_handler.run_single_interaction(
-                       duration=duration,
-                       timeout=timeout,
-                       phrase_limit=phrase_limit
+                  current_task = asyncio.create_task(
+                       assistant.interaction_handler.run_single_interaction(
+                           duration=duration,
+                           timeout=timeout,
+                           phrase_limit=phrase_limit
+                       )
                   )
+                  user_input_status, assistant_output = await current_task
                   
-                  # Handle interaction status
                   if user_input_status == "ERROR":
                        print(f"Recovering from interaction error: {assistant_output}")
-                       # Use asyncio.sleep in async main
                        await asyncio.sleep(2) 
-                  # No need to handle INTERRUPTED specifically here if cleanup is robust
+                  current_task = None 
+
+              except asyncio.CancelledError:
+                   print("Interaction task cancelled due to shutdown request.")
+                   shutdown_requested = True
+                   break 
               
               except Exception as loop_e:
-                   # Keep general error handling for the loop iteration
                    print(f"\nError during interaction loop iteration: {loop_e}")
                    traceback.print_exc()
-                   # Maybe add a condition to break if errors persist?
+                   current_task = None # Clear task on other exceptions too
                    await asyncio.sleep(2) 
          # --- End Main Interaction Loop --- 
 
@@ -117,8 +115,6 @@ async def main():
          traceback.print_exc()
     
     finally:
-        # --- Unregister Signal Handler (Good Practice) --- 
-        # Check if loop exists and is not closed before removing
         try:
             loop = asyncio.get_running_loop()
             if loop and not loop.is_closed():
@@ -128,7 +124,6 @@ async def main():
              print("No running event loop to remove signal handler from.")
         except Exception as e_remove:
             print(f"Error removing signal handler: {e_remove}")
-        # ------------------------------------------------
         
         # --- Summarization on Graceful Shutdown --- 
         if shutdown_requested and assistant: 

@@ -50,7 +50,7 @@ class LLMHandler:
             self.query_llm_model = None
             if raw_query_llm_model:
                  self.query_llm_model = raw_query_llm_model.split('#')[0].strip().strip('"').strip("'")
-                 print(f"Cleaned QUERY_LLM_MODEL: '{self.query_llm_model}' (from '{raw_query_llm_model}')")
+                 print(f"QUERY_LLM_MODEL: {self.query_llm_model}")
 
             required_rag_vars = {'WORKING_DIR': self.working_dir, 
                                  'QUERY_LLM_MODEL': self.query_llm_model, 

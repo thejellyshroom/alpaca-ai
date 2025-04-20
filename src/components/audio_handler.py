@@ -67,7 +67,6 @@ class AudioHandler:
             except Exception as e:
                 print(f"Error stopping playback before listen: {e}")
 
-        print("Listening for speech...")
         original_pause_threshold = self.recognizer.pause_threshold
         original_phrase_threshold = self.recognizer.phrase_threshold
         original_non_speaking_duration = self.recognizer.non_speaking_duration
@@ -86,7 +85,6 @@ class AudioHandler:
                         duration = 1.0 if retry_count == 0 else 0.5
                         print(f"Adjusting for ambient noise ({duration}s)...")
                         self.recognizer.adjust_for_ambient_noise(source, duration=duration)
-                        print(f"Ambient energy threshold set to: {self.recognizer.energy_threshold:.2f}")
 
                         print(f"Listening with timeout={timeout if timeout else 5} seconds, phrase limit={self.max_phrase_duration}s...")
                         audio_data = self.recognizer.listen(

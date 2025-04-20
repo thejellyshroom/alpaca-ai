@@ -24,10 +24,7 @@ class TTSHandler:
             "character": self.voice      # Voice character/persona
         }
         
-        print(f"Initializing Kokoro TTS with voice: {self.voice}")
-        print(f"Base speech speed set to: {self.speed}x")
-        print(f"Sample rate set to: {self.sample_rate}")
-        print(f"Speech characteristics: {self.speech_characteristics}")
+        print(f"Initializing Kokoro TTS...")
         
         # Determine language code from voice prefix
         lang_code = self.voice[0]  # First letter of voice ID determines language
@@ -86,7 +83,6 @@ class TTSHandler:
             if not text:
                 return np.zeros(0, dtype=np.float32), self.sample_rate
             
-            # For very long text, split into sentences and process separately
             if len(text) > 200:
                 sentences = self._split_into_sentences(text)
                 audio_segments = []
@@ -101,7 +97,6 @@ class TTSHandler:
                         # Generate speech for each sentence
                         audio_segment = self._synthesize_single(sentence)
                         
-                        # Ensure audio_segment is not None
                         if audio_segment is None:
                             print(f"Warning: Got None audio segment for sentence: {sentence}")
                             continue
@@ -131,35 +126,23 @@ class TTSHandler:
                     print("Warning: No audio segments were generated")
                     return np.zeros(0, dtype=np.float32), sample_rate
             else:
-                # Process short text directly
-                # Set speed for the entire text
                 audio = self._synthesize_single(text)
                 if audio is None:
                     print(f"Warning: Got None audio for text: {text}")
                     return np.zeros(0, dtype=np.float32), self.sample_rate
                 return audio, self.sample_rate
         except Exception as e:
-            # Catch-all for any unexpected errors
             print(f"Unexpected error in speech synthesis: {str(e)}")
             import traceback
             traceback.print_exc()
             return np.zeros(0, dtype=np.float32), self.sample_rate
         finally:
-            # Restore original characteristics if they were temporarily overridden
             if kwargs:
                 self.speech_characteristics = temp_characteristics
     
     def _synthesize_single(self, text):
-        """Synthesize a single piece of text.
-        
-        Args:
-            text (str): Text to convert to speech
-            
-        Returns:
-            numpy.ndarray: Audio array
-        """
         try:
-            print(f"Synthesizing with speed: {self.speed:.2f}x, voice: {self.voice}")
+            # print(f"Synthesizing with speed: {self.speed:.2f}x, voice: {self.voice}")
             
             generator = self.kokoro_pipeline(
                 text,
@@ -170,20 +153,15 @@ class TTSHandler:
             
             audio_segments = []
             for _, _, audio in generator:
-                # Check if audio is None or not a tensor
                 if audio is None:
                     print("Warning: Received None audio from Kokoro pipeline")
                     continue
                 
-                # Handle different types of audio objects
                 if hasattr(audio, 'numpy'):
-                    # PyTorch tensor
                     audio_segments.append(audio.numpy())
                 elif isinstance(audio, np.ndarray):
-                    # Already a numpy array
                     audio_segments.append(audio)
                 else:
-                    # Try to convert to numpy array
                     try:
                         audio_segments.append(np.array(audio, dtype=np.float32))
                     except Exception as e:

@@ -10,17 +10,13 @@ class Transcriber:
         config = config.get("faster-whisper", {})
         self.model_id = config.get("model_id", "Systran/faster-whisper-small")
         
-        # Extract parameters from kwargs with defaults
         self.beam_size = config.get("beam_size", 5)
         self.compute_type = config.get("compute_type", "int8")  # Changed to int8 for better compatibility
         self.device = config.get("device", "cuda" if torch.cuda.is_available() else "cpu")
-        
-        # Set download_root for model files
         self.download_root = config.get("download_root")
         
-        # Initialize faster-whisper model
         try:
-            print(f"Initializing faster-whisper with model={self.model_id}, device={self.device}, compute_type={self.compute_type}, beam_size={self.beam_size}")
+            print(f"Initializing STT Handler (Transcriber)...")
             
             self.model = WhisperModel(
                 self.model_id,

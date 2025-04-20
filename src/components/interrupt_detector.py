@@ -132,12 +132,9 @@ class InterruptDetector:
                     if stream.is_active():
                        stream.stop_stream()
                     stream.close()
-                    print("Interrupt listener stream closed.")
                 except Exception as e:
                     print(f"Error closing interrupt listener stream: {e}")
             # --- Final State Update --- #
-            print("Interrupt listener processing stopped.")
-            # Ensure the stop event is set for any external checks after the loop finishes
             self.should_stop_interrupt_listener.set()
 
     # --- Public Methods (start/stop/cleanup remain largely the same) ---

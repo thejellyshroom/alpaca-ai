@@ -81,9 +81,6 @@ async def ollama_model_if_cache(
         cache_key = compute_mdhash_id(str(cache_input), prefix="llmcache-")
         cached_response = await hashing_kv.get_by_id(cache_key)
         if cached_response:
-            print(f"[Cache Hit] Returning cached response for key: {cache_key}")
-            # Handle potential stream vs non-stream from cache if needed later
-            # For now, assume cached is non-streamed string
             if isinstance(cached_response, dict) and 'content' in cached_response:
                 return cached_response['content']
             elif isinstance(cached_response, str): # Simple string cache
@@ -121,14 +118,11 @@ async def ollama_model_if_cache(
     
     # --- Caching Response --- 
     non_stream_response_content = None
-    # --- Add check for stream == False --- 
     if not stream:
         non_stream_response_content = response["message"]["content"]
         # --- Only cache if NOT streaming and caching is enabled --- 
         if hashing_kv and cache_key: 
-             print(f"[Cache Write] Caching response for key: {cache_key}")
              await hashing_kv.upsert({cache_key: {"content": non_stream_response_content}})
-    # --- End Caching Modification ---
 
     if stream:
         async def inner():

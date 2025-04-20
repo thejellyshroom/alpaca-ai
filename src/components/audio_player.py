@@ -95,10 +95,6 @@ class AudioPlayer:
                     finally:
                         self.audio_queue.task_done()
 
-                        # Log actual playback time vs expected
-                        actual_duration = time.time() - playback_start
-                        if abs(actual_duration - playback_duration) > 0.2: # Only log if significantly different
-                            print(f"Audio timing: expected={playback_duration:.2f}s, actual={actual_duration:.2f}s")
 
                 except queue.Empty:
                     # No audio in queue, set playing flag to false if queue is empty
