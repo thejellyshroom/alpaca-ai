@@ -1,5 +1,5 @@
 import ollama
-from typing import Dict, Any, Generator
+from typing import Dict, Any, Generator, AsyncIterator
 import random
 import os
 import sys
@@ -124,52 +124,49 @@ class LLMHandler:
              traceback.print_exc()
              yield f"[Error communicating with base LLM: {e}]" # Yield error message
                 
-    def get_rag_response(self, query: str, messages: list[Dict[str, Any]]) -> Generator[str, None, None]:
-        """Get a response using the MiniRAG querier instance, falling back to base LLM if no context found."""
+    async def get_rag_response(self, query: str, messages: list[Dict[str, Any]]) -> AsyncIterator[str]:
+        """Get a streaming response using the MiniRAG querier instance, falling back to base LLM if no context found."""
         if not self.rag_querier:
             print("Error: get_rag_response called but RAG querier is not available.")
-            yield "[Internal Error: RAG is not available]"
-            return
+            async def error_gen(): 
+                yield "[Internal Error: RAG is not available]"
+            return error_gen()
         
-        # Create QueryParam (system_prompt is now handled inside MiniRAG via global_config)
-        rag_param = QueryParam(mode="naive") # Default to naive, MiniRAG might override
+        rag_param = QueryParam(mode="naive") 
             
         print(f"Using RAG Querier (LLM: {self.query_llm_model}) with mode '{rag_param.mode}'")
         try:
-            # MiniRAG's query function will use the PERSONALITY_CORE from its global_config
-            # to format the internal prompts (rag_response, naive_rag_response)
-            answer = self.rag_querier.query(
+            # Use await with aquery directly 
+            answer_source = await self.rag_querier.aquery(
                 query, 
                 param=rag_param
             )
             
             # ---> Fallback Logic with Personality <--- 
-            if answer is None:
-                 print("RAG query returned None (no context found). Falling back to base LLM with personality.")
+            if answer_source is None or isinstance(answer_source, str): # Handle None or error string from RAG
+                 fallback_reason = "no context found" if answer_source is None else f"RAG error: {answer_source}"
+                 print(f"RAG query failed ({fallback_reason}). Falling back to base LLM with personality.")
                  rag_failure_note = {
                      "role": "system", 
-                     # Inject personality into the fallback note too?
-                     "content": f"{PERSONALITY_CORE}\n\n(Self-Correction: My knowledge base didn\'t have specific information for that query. I'll answer from general knowledge, but don't expect miracles. 🙄)"
+                     "content": f"{PERSONALITY_CORE}\n\n(Self-Correction: My knowledge base lookup failed ({fallback_reason}). I'll answer from general knowledge, but don't expect miracles. 🙄)"
                  }
-                 # Replace original system message (if any) with the combined personality+fallback note
                  non_system_messages = [m for m in messages if m['role'] != 'system']
                  modified_messages = [rag_failure_note] + non_system_messages
                  
-                 # Call the standard get_response which NOW handles personality injection
-                 yield from self.get_response(messages=modified_messages)
-                 return # Stop this generator
+                 # Return the generator from the base LLM call (get_response handles streaming)
+                 return self.get_response(messages=modified_messages) 
             # ---> End Fallback Logic <--- 
 
-            # RAG query succeeded, yield the answer char by char
-            print("RAG query successful. Yielding answer character by character...")
-            if answer:
-                 for char in answer:
-                     yield char
-            else:
-                 # Handle case where RAG returns empty string (not None)
-                 yield "[RAG query returned an empty answer, how pathetic.]" # Added sass
+            # --- Return the Async Generator Directly --- 
+            # RAG query succeeded, answer_source is the AsyncIterator from aquery/ollama
+            print("RAG query successful. Returning response stream...")
+            return answer_source # Return the generator directly
                 
         except Exception as e:
-            print(f"\nError during MiniRAG query execution: {e}")
+            print(f"\nError during MiniRAG query invocation: {e}")
             traceback.print_exc()
-            yield f"[Error during RAG query: {e}. Probably your fault.]" # Added sass
+            # --- Fix NameError by capturing error message --- 
+            error_message = f"[Error during RAG query invocation: {e}]"
+            async def error_gen(): 
+                 yield error_message 
+            return error_gen()

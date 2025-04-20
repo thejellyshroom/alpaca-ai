@@ -46,18 +46,12 @@ def find_txt_files(root_path):
             if file.endswith(".txt") and not file.startswith('.') and not file.startswith('._'):
                 full_path = os.path.join(root, file)
                 txt_files.append(full_path)
-                # print(f"  Found: {full_path}") # Optional: verbose logging
-            elif file.startswith('.') or file.startswith('._'):
-                print(f"[Info] Skipping hidden/metadata file: {os.path.join(root, file)}")
-            elif not file.endswith(".txt"):
-                print(f"[Info] Skipping non-txt file: {os.path.join(root, file)}")
                 
     print(f"Found {len(txt_files)} .txt files to potentially process.")
     return txt_files
 
 def run_indexing():
     """Main function to run the indexing process."""
-    print("--- Starting MiniRAG Indexing Process ---")
     load_dotenv() # Load environment variables from .env
 
     # --- Configuration from Environment Variables ---
@@ -80,8 +74,7 @@ def run_indexing():
     if EXTRACTION_LLM_MODEL:
         raw_extraction_model = EXTRACTION_LLM_MODEL
         EXTRACTION_LLM_MODEL = raw_extraction_model.split('#')[0].strip().strip('"').strip("'")
-        print(f"Cleaned EXTRACTION_LLM_MODEL: '{EXTRACTION_LLM_MODEL}' (from '{raw_extraction_model}')")
-
+    print(f"EXTRACTION_LLM_MODEL: '{EXTRACTION_LLM_MODEL}'")
     print(f"WORKING_DIR: {WORKING_DIR}")
     print(f"DATA_PATH: {DATA_PATH}")
     print(f"EMBEDDING_MODEL: {EMBEDDING_MODEL}")

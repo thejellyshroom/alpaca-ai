@@ -3,7 +3,7 @@ import os
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from functools import partial
-from typing import Type, cast, Any, Union, List, Optional
+from typing import Type, cast, Any, Union, List, Optional, AsyncIterator
 from dotenv import load_dotenv
 
 
@@ -308,11 +308,31 @@ class MiniRAG:
             embedding_func=self.embedding_func,
         )
 
+        # --- Explicitly get ollama_model from kwargs for partial --- 
+        explicit_ollama_model = self.llm_model_kwargs.get("ollama_model")
+        if not explicit_ollama_model:
+            print(f"[Warning] 'ollama_model' not found in llm_model_kwargs during MiniRAG init. Using llm_model_name: {self.llm_model_name}")
+            explicit_ollama_model = self.llm_model_name # Fallback to the base llm_model_name
+        
+        # Create a copy of llm_model_kwargs and remove ollama_model from it
+        other_kwargs = self.llm_model_kwargs.copy()
+        other_kwargs.pop("ollama_model", None) 
+        
+        # --- REMOVE stream=True forcing block --- 
+        # if 'stream' not in other_kwargs:
+        #     other_kwargs['stream'] = True
+        #     print("[MiniRAG Init] Forcing stream=True for llm_model_func kwargs.")
+        # elif not other_kwargs['stream']:
+        #      print("[MiniRAG Init Warning] stream=False found in llm_model_kwargs, overriding to True for RAG streaming.")
+        #      other_kwargs['stream'] = True
+        # -----------------------------------------
+        
         self.llm_model_func = limit_async_func_call(self.llm_model_max_async)(
             partial(
-                self.llm_model_func,
+                self.llm_model_func, 
+                ollama_model=explicit_ollama_model, 
                 hashing_kv=self.llm_response_cache,
-                **self.llm_model_kwargs,
+                **other_kwargs, # Should no longer contain stream=True unless originally passed
             )
         )
         # Initialize document status storage
@@ -369,7 +389,7 @@ class MiniRAG:
             split_by_character, split_by_character_only
         )
 
-        # Perform additional entity extraction as per original ainsert logic
+        # --- Prepare chunks for entity extraction --- 
         inserting_chunks = {
             compute_mdhash_id(dp["content"], prefix="chunk-"): {
                 **dp,
@@ -388,14 +408,17 @@ class MiniRAG:
 
         if inserting_chunks:
             logger.info("Performing entity extraction on newly processed chunks")
+            # --- Pass self.llm_model_func directly --- 
             await extract_entities(
-                inserting_chunks,
+                chunks=inserting_chunks,
                 knowledge_graph_inst=self.chunk_entity_relation_graph,
                 entity_vdb=self.entities_vdb,
                 entity_name_vdb=self.entity_name_vdb,
                 relationships_vdb=self.relationships_vdb,
-                global_config=self.global_config, # Pass the stored config
+                llm_model_func=self.llm_model_func, # Pass the partial object directly
+                global_config=self.global_config, # Still needed for other configs
             )
+            # --- End Pass --- 
  
         await self._insert_done()
 
@@ -541,23 +564,32 @@ class MiniRAG:
             tasks.append(cast(StorageNameSpace, storage_inst).index_done_callback())
         await asyncio.gather(*tasks)
 
-    def query(self, query: str, param: QueryParam = QueryParam()):
-        loop = always_get_an_event_loop()
-        return loop.run_until_complete(self.aquery(query, param))
+    # --- REMOVE Synchronous Query Wrapper --- 
+    # def query(self, query: str, param: QueryParam = QueryParam()) -> Union[str, AsyncIterator[str]]:
+    #     loop = always_get_an_event_loop()
+    #     # This causes problems when called from an async context
+    #     return loop.run_until_complete(self.aquery(query, param))
+    # ----------------------------------------
 
-    async def aquery(self, query: str, param: QueryParam = QueryParam()):
+    # Keep the async version
+    async def aquery(self, query: str, param: QueryParam = QueryParam()) -> Union[str, AsyncIterator[str]]:
+        # --- Pass self.llm_model_func directly --- 
+        llm_func = self.llm_model_func # Get the configured partial object
+        
+        # --- The underlying function now returns the generator --- 
         if param.mode == "light":
-            response = await hybrid_query(
+            response_generator = await hybrid_query(
                 query,
                 self.chunk_entity_relation_graph,
                 self.entities_vdb,
                 self.relationships_vdb,
                 self.text_chunks,
                 param,
-                self.global_config, # Pass the stored config
+                llm_model_func=llm_func, 
+                global_config=self.global_config, 
             )
         elif param.mode == "mini":
-            response = await minirag_query(
+            response_generator = await minirag_query(
                 query,
                 self.chunk_entity_relation_graph,
                 self.entities_vdb,
@@ -567,20 +599,24 @@ class MiniRAG:
                 self.text_chunks,
                 self.embedding_func,
                 param,
-                self.global_config, # Pass the stored config
+                llm_model_func=llm_func, 
+                global_config=self.global_config,
             )
         elif param.mode == "naive":
-            response = await naive_query(
+            response_generator = await naive_query(
                 query,
                 self.chunks_vdb,
                 self.text_chunks,
                 param,
-                self.global_config, # Pass the stored config
+                llm_model_func=llm_func, 
+                global_config=self.global_config,
             )
         else:
             raise ValueError(f"Unknown mode {param.mode}")
+        
         await self._query_done()
-        return response
+        # --- Return the generator directly --- 
+        return response_generator
 
     async def _query_done(self):
         tasks = []
