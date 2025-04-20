@@ -11,6 +11,7 @@ from minirag.utils import EmbeddingFunc
 from transformers import AutoModel, AutoTokenizer
 from datetime import datetime
 from dotenv import load_dotenv
+import asyncio # Ensure asyncio is imported
 
 def setup_embedding_func(model_name):
     """Initializes the embedding function using Hugging Face transformers."""
@@ -50,8 +51,10 @@ def find_txt_files(root_path):
     print(f"Found {len(txt_files)} .txt files to potentially process.")
     return txt_files
 
-def run_indexing():
-    """Main function to run the indexing process."""
+# Make run_indexing async
+async def run_indexing():
+    """Main async function to run the indexing process."""
+    print("--- Starting MiniRAG Indexing Process ---")
     load_dotenv() # Load environment variables from .env
 
     # --- Configuration from Environment Variables ---
@@ -126,18 +129,15 @@ def run_indexing():
     error_count = 0
 
     for i, file_path in enumerate(files_to_process):
-        relative_path = os.path.relpath(file_path, DATA_PATH) # Use relative path as key? Or full path? Let's use full.
         file_key = file_path 
-        
-        # Check status using the chosen key
         if doc_status.get(file_key, {}).get("status") == "processed":
-            # print(f"[Info] Skipping already processed file: {file_path}")
             skipped_count += 1
             continue
 
-        print(f"--- Processing file {i+1}/{len(files_to_process)}: {file_path} ---")
+        print(f"--- Processing file {i+1}/{len(files_to_process)}: {file_path} --- ")
         try:
             print(f"[{datetime.now()}] Reading file content...")
+            # Consider using aiofiles for async file reading if files are large
             with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read()
             
@@ -146,14 +146,17 @@ def run_indexing():
                  doc_status[file_key] = {"status": "skipped_empty", "timestamp": str(datetime.now())}
                  skipped_count += 1
             else:
-                print(f"[{datetime.now()}] Starting MiniRAG insert...")
-                rag_extractor.insert(content) 
-                print(f"[{datetime.now()}] Finished MiniRAG insert.")
+                print(f"[{datetime.now()}] Starting MiniRAG ainsert...")
+                # --- Use await ainsert --- 
+                await rag_extractor.ainsert(content) 
+                # -------------------------
+                print(f"[{datetime.now()}] Finished MiniRAG ainsert.")
                 doc_status[file_key] = {"status": "processed", "timestamp": str(datetime.now())}
                 processed_count += 1
 
             # Update status file after each file
             try:
+                # Consider async file write if needed
                 with open(kv_store_path, "w", encoding="utf-8") as kv_file:
                     json.dump(doc_status, kv_file, indent=4)
             except Exception as e:
@@ -161,7 +164,8 @@ def run_indexing():
 
         except Exception as e:
             print(f"***** Error processing file {file_path}: {e} *****")
-            traceback.print_exc()
+            # Log original traceback for the specific file error
+            traceback.print_exc() 
             doc_status[file_key] = {"status": "error", "error_message": str(e), "timestamp": str(datetime.now())}
             error_count += 1
             # Save status even on error

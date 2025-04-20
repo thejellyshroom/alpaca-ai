@@ -368,10 +368,14 @@ class MiniRAG:
             # set client
             storage.db = db_client
 
-    def insert(self, string_or_strings):
-        loop = always_get_an_event_loop()
-        return loop.run_until_complete(self.ainsert(string_or_strings))
+    # --- REMOVE Synchronous Insert Wrapper --- 
+    # def insert(self, string_or_strings):
+    #     loop = always_get_an_event_loop()
+    #     # This causes problems when called from an async context
+    #     return loop.run_until_complete(self.ainsert(string_or_strings))
+    # -----------------------------------------
 
+    # Keep the async version
     async def ainsert(
         self,
         input: Union[str, list[str]],
