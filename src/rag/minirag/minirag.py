@@ -1,6 +1,6 @@
 import asyncio
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from functools import partial
 from typing import Type, cast, Any, Union, List, Optional
@@ -183,7 +183,23 @@ class MiniRAG:
 
     max_parallel_insert: int = field(default=int(os.getenv("MAX_PARALLEL_INSERT", 2)))
 
+    # Accept optional global_config
+    global_config: Optional[dict] = field(default=None) 
+
     def __post_init__(self):
+        # Initialize self.global_config if not passed in __init__
+        if self.global_config is None:
+            self.global_config = asdict(self)
+        else: 
+            # Ensure all self attributes are also in global_config if it was passed
+            # This merges defaults from dataclass with passed config
+            # Create a dict from self *excluding* global_config itself to avoid recursion
+            self_dict_for_defaults = {f.name: getattr(self, f.name) for f in fields(self) if f.name != 'global_config'}
+            
+            for key, value in self_dict_for_defaults.items():
+                if key not in self.global_config:
+                     self.global_config[key] = value
+
         log_file = os.path.join(self.working_dir, "minirag.log")
         set_logger(log_file)
         logger.setLevel(self.log_level)
@@ -193,10 +209,9 @@ class MiniRAG:
             logger.info(f"Creating working directory {self.working_dir}")
             os.makedirs(self.working_dir)
 
-        # show config
-        global_config = asdict(self)
-        _print_config = ",\n  ".join([f"{k} = {v}" for k, v in global_config.items()])
-        logger.debug(f"MiniRAG init with param:\n  {_print_config}\n")
+        # show config using self.global_config
+        _print_config = ",\n  ".join([f"{k} = {v}" for k, v in self.global_config.items()])
+        logger.debug(f"MiniRAG init with effective config:\n  {_print_config}\n")
 
         # @TODO: should move all storage setup here to leverage initial start params attached to self.
 
@@ -210,16 +225,17 @@ class MiniRAG:
             self.graph_storage
         )
 
+        # Pass self.global_config to storage partials
         self.key_string_value_json_storage_cls = partial(
-            self.key_string_value_json_storage_cls, global_config=global_config
+            self.key_string_value_json_storage_cls, global_config=self.global_config
         )
 
         self.vector_db_storage_cls = partial(
-            self.vector_db_storage_cls, global_config=global_config
+            self.vector_db_storage_cls, global_config=self.global_config
         )
 
         self.graph_storage_cls = partial(
-            self.graph_storage_cls, global_config=global_config
+            self.graph_storage_cls, global_config=self.global_config
         )
         self.json_doc_status_storage = self.key_string_value_json_storage_cls(
             namespace="json_doc_status_storage",
@@ -233,7 +249,7 @@ class MiniRAG:
         self.llm_response_cache = (
             self.key_string_value_json_storage_cls(
                 namespace="llm_response_cache",
-                global_config=asdict(self),
+                global_config=self.global_config, # Use self.global_config
                 embedding_func=None,
             )
             if self.enable_llm_cache
@@ -249,17 +265,17 @@ class MiniRAG:
         ####
         self.full_docs = self.key_string_value_json_storage_cls(
             namespace="full_docs",
-            global_config=asdict(self),
+            global_config=self.global_config, # Use self.global_config
             embedding_func=self.embedding_func,
         )
         self.text_chunks = self.key_string_value_json_storage_cls(
             namespace="text_chunks",
-            global_config=asdict(self),
+            global_config=self.global_config, # Use self.global_config
             embedding_func=self.embedding_func,
         )
         self.chunk_entity_relation_graph = self.graph_storage_cls(
             namespace="chunk_entity_relation",
-            global_config=asdict(self),
+            global_config=self.global_config, # Use self.global_config
             embedding_func=self.embedding_func,
         )
         ####
@@ -268,28 +284,27 @@ class MiniRAG:
 
         self.entities_vdb = self.vector_db_storage_cls(
             namespace="entities",
-            global_config=asdict(self),
+            global_config=self.global_config, # Use self.global_config
             embedding_func=self.embedding_func,
             meta_fields={"entity_name"},
         )
-        global_config = asdict(self)
 
         self.entity_name_vdb = self.vector_db_storage_cls(
             namespace="entities_name",
-            global_config=asdict(self),
+            global_config=self.global_config, # Use self.global_config
             embedding_func=self.embedding_func,
             meta_fields={"entity_name"},
         )
 
         self.relationships_vdb = self.vector_db_storage_cls(
             namespace="relationships",
-            global_config=asdict(self),
+            global_config=self.global_config, # Use self.global_config
             embedding_func=self.embedding_func,
             meta_fields={"src_id", "tgt_id"},
         )
         self.chunks_vdb = self.vector_db_storage_cls(
             namespace="chunks",
-            global_config=asdict(self),
+            global_config=self.global_config, # Use self.global_config
             embedding_func=self.embedding_func,
         )
 
@@ -304,7 +319,7 @@ class MiniRAG:
         self.doc_status_storage_cls = self._get_storage_class(self.doc_status_storage)
         self.doc_status = self.doc_status_storage_cls(
             namespace="doc_status",
-            global_config=global_config,
+            global_config=self.global_config, # Use self.global_config
             embedding_func=None,
         )
 
@@ -379,7 +394,7 @@ class MiniRAG:
                 entity_vdb=self.entities_vdb,
                 entity_name_vdb=self.entity_name_vdb,
                 relationships_vdb=self.relationships_vdb,
-                global_config=asdict(self),
+                global_config=self.global_config, # Pass the stored config
             )
  
         await self._insert_done()
@@ -539,7 +554,7 @@ class MiniRAG:
                 self.relationships_vdb,
                 self.text_chunks,
                 param,
-                asdict(self),
+                self.global_config, # Pass the stored config
             )
         elif param.mode == "mini":
             response = await minirag_query(
@@ -552,7 +567,7 @@ class MiniRAG:
                 self.text_chunks,
                 self.embedding_func,
                 param,
-                asdict(self),
+                self.global_config, # Pass the stored config
             )
         elif param.mode == "naive":
             response = await naive_query(
@@ -560,7 +575,7 @@ class MiniRAG:
                 self.chunks_vdb,
                 self.text_chunks,
                 param,
-                asdict(self),
+                self.global_config, # Pass the stored config
             )
         else:
             raise ValueError(f"Unknown mode {param.mode}")

@@ -10,6 +10,9 @@ from minirag import MiniRAG, QueryParam
 from minirag.llm.ollama import ollama_model_complete
 from indexer import *
 
+# Personality Import
+from src.config.personality_config import PERSONALITY_CORE
+
 class LLMHandler:
     def __init__(self, config=None):
         """Initialize LLM Handler, including RAG querier if enabled."""
@@ -69,6 +72,8 @@ class LLMHandler:
                             llm_model_max_async=llm_max_async,
                             llm_model_kwargs={"ollama_model": self.query_llm_model},
                             embedding_func=rag_embedding_func,
+                            # Inject personality core into MiniRAG's global config
+                            global_config={"personality_core": PERSONALITY_CORE} 
                         )
                     except Exception as e:
                         print(f"Error initializing MiniRAG Querier: {e}")
@@ -83,8 +88,27 @@ class LLMHandler:
             print("RAG is disabled via ENABLE_RAG environment variable.")
         
     def get_response(self, messages: list[Dict[str, Any]]) -> Generator[str, None, None]:
-        """Get a streaming response from the base LLM."""
+        """Get a streaming response from the base LLM, injecting personality."""
         print(f"Using Base LLM '{self.model_name}' with params: {self.params}")
+        
+        # --- Inject Personality into System Prompt --- 
+        # Find or create system message
+        system_message_found = False
+        for msg in messages:
+            if msg['role'] == 'system':
+                # Prepend personality to existing system message
+                original_content = msg.get('content', '')
+                msg['content'] = f"{PERSONALITY_CORE}\n\n{original_content}"
+                system_message_found = True
+                break
+        
+        if not system_message_found:
+            # Insert personality as the system message if none exists
+            messages.insert(0, {'role': 'system', 'content': PERSONALITY_CORE})
+            
+        print(f"[Debug Personality] System prompt for base LLM: {messages[0]['content'][:100]}...")
+        # --- End Personality Injection --- 
+            
         try:
             response = ollama.chat(
                 model=self.model_name, 
@@ -107,47 +131,45 @@ class LLMHandler:
             yield "[Internal Error: RAG is not available]"
             return
         
-        # Extract system prompt from messages history (assuming it's the first message)
-        system_prompt = "You are a helpful assistant." # Default fallback
-        if messages and messages[0]["role"] == "system":
-             system_prompt = messages[0]["content"]
-             print(f"[Debug RAG] Extracted system prompt for RAG query: '{system_prompt[:60]}...'")
-        else:
-             print("[Debug RAG] No system prompt found in messages, using default.")
-
-        # Create QueryParam with the extracted system prompt
-        rag_param = QueryParam(mode="naive", system_prompt=system_prompt)
+        # Create QueryParam (system_prompt is now handled inside MiniRAG via global_config)
+        rag_param = QueryParam(mode="naive") # Default to naive, MiniRAG might override
             
         print(f"Using RAG Querier (LLM: {self.query_llm_model}) with mode '{rag_param.mode}'")
         try:
+            # MiniRAG's query function will use the PERSONALITY_CORE from its global_config
+            # to format the internal prompts (rag_response, naive_rag_response)
             answer = self.rag_querier.query(
                 query, 
                 param=rag_param
             )
             
-            # ---> Reintroduce Fallback Logic <--- 
+            # ---> Fallback Logic with Personality <--- 
             if answer is None:
-                 print("RAG query returned None (no context found). Falling back to base LLM.")
+                 print("RAG query returned None (no context found). Falling back to base LLM with personality.")
                  rag_failure_note = {
                      "role": "system", 
-                     "content": "(Self-Correction: My knowledge base didn\'t have specific information for that query. Answering from general knowledge.)"
+                     # Inject personality into the fallback note too?
+                     "content": f"{PERSONALITY_CORE}\n\n(Self-Correction: My knowledge base didn\'t have specific information for that query. I'll answer from general knowledge, but don't expect miracles. 🙄)"
                  }
-                 modified_messages = messages + [rag_failure_note]
-                 # Call the standard get_response with the modified history
+                 # Replace original system message (if any) with the combined personality+fallback note
+                 non_system_messages = [m for m in messages if m['role'] != 'system']
+                 modified_messages = [rag_failure_note] + non_system_messages
+                 
+                 # Call the standard get_response which NOW handles personality injection
                  yield from self.get_response(messages=modified_messages)
                  return # Stop this generator
             # ---> End Fallback Logic <--- 
 
-            # RAG query succeeded, yield the answer char by char (as reverted)
+            # RAG query succeeded, yield the answer char by char
             print("RAG query successful. Yielding answer character by character...")
             if answer:
                  for char in answer:
                      yield char
             else:
                  # Handle case where RAG returns empty string (not None)
-                 yield "[RAG query returned an empty answer]"
+                 yield "[RAG query returned an empty answer, how pathetic.]" # Added sass
                 
         except Exception as e:
             print(f"\nError during MiniRAG query execution: {e}")
             traceback.print_exc()
-            yield f"[Error during RAG query: {e}]"
+            yield f"[Error during RAG query: {e}. Probably your fault.]" # Added sass

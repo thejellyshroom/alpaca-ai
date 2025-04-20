@@ -474,13 +474,21 @@ async def local_query(
         return context
     if context is None:
         return PROMPTS["fail_response"]
+    
+    # --- Add personality injection --- 
     sys_prompt_temp = PROMPTS["rag_response"]
+    personality_core = global_config.get("personality_core", "") # Get personality
     sys_prompt = sys_prompt_temp.format(
-        context_data=context, response_type=query_param.response_type
+        personality_core=personality_core, # Inject personality
+        context_data=context, 
+        response_type=query_param.response_type
     )
+    # --- End personality injection ---
+    
     response = await use_model_func(
         query,
         system_prompt=sys_prompt,
+        history_messages=[]
     )
     if len(response) > len(sys_prompt):
         response = (
@@ -745,13 +753,20 @@ async def global_query(
     if context is None:
         return PROMPTS["fail_response"]
 
+    # --- Add personality injection --- 
     sys_prompt_temp = PROMPTS["rag_response"]
+    personality_core = global_config.get("personality_core", "") # Get personality
     sys_prompt = sys_prompt_temp.format(
-        context_data=context, response_type=query_param.response_type
+        personality_core=personality_core, # Inject personality
+        context_data=context, 
+        response_type=query_param.response_type
     )
+    # --- End personality injection ---
+
     response = await use_model_func(
         query,
         system_prompt=sys_prompt,
+        history_messages=[]
     )
     if len(response) > len(sys_prompt):
         response = (
@@ -999,13 +1014,20 @@ async def hybrid_query(
     if context is None:
         return PROMPTS["fail_response"]
 
+    # --- Add personality injection --- 
     sys_prompt_temp = PROMPTS["rag_response"]
+    personality_core = global_config.get("personality_core", "") # Get personality
     sys_prompt = sys_prompt_temp.format(
-        context_data=context, response_type=query_param.response_type
+        personality_core=personality_core, # Inject personality
+        context_data=context, 
+        response_type=query_param.response_type
     )
+    # --- End personality injection ---
+
     response = await use_model_func(
         query,
         system_prompt=sys_prompt,
+        history_messages=[]
     )
     if len(response) > len(sys_prompt):
         response = (
@@ -1124,16 +1146,21 @@ async def naive_query(
     # Combine the content of the retrieved chunks
     context_data = "\n\n".join(valid_chunks)
 
-    # Format the response using the naive RAG prompt
+    # --- Add personality injection --- 
     sys_prompt_temp = PROMPTS["naive_rag_response"]
+    personality_core = global_config.get("personality_core", "") # Get personality
     sys_prompt = sys_prompt_temp.format(
-        content_data=context_data, response_type=query_param.response_type
+        personality_core=personality_core, # Inject personality
+        content_data=context_data, 
+        response_type=query_param.response_type
     )
+    # --- End personality injection ---
 
     # Call the LLM with the retrieved context
     response = await use_model_func(
         query,
         system_prompt=sys_prompt,
+        history_messages=[]
     )
     logger.info("Successfully generated response using naive RAG context.")
     return response
@@ -1486,13 +1513,20 @@ async def minirag_query(  # MiniRAG
     if context is None:
         return PROMPTS["fail_response"]
 
+    # --- Add personality injection --- 
     sys_prompt_temp = PROMPTS["rag_response"]
+    personality_core = global_config.get("personality_core", "") # Get personality
     sys_prompt = sys_prompt_temp.format(
-        context_data=context, response_type=query_param.response_type
+        personality_core=personality_core, # Inject personality
+        context_data=context, 
+        response_type=query_param.response_type
     )
+    # --- End personality injection ---
+
     response = await use_model_func(
         query,
         system_prompt=sys_prompt,
+        history_messages=[]
     )
 
     return response

@@ -312,15 +312,18 @@ PROMPTS[
 
 PROMPTS["fail_response"] = "Sorry, I'm not able to provide an answer to that question."
 
-PROMPTS["rag_response"] = """---Role---
+PROMPTS["rag_response"] = """---Personality Core---
+{personality_core}
 
-You are a helpful assistant responding to questions about data in the tables provided.
+---Role---
+
+You are a helpful assistant responding to questions about data in the tables provided. Your personality is defined above in the Personality Core section. Adhere to it strictly.
 
 
 ---Goal---
 
 Generate a response of the target length and format that responds to the user's question, summarizing all information in the input data tables appropriate for the response length and format, and incorporating any relevant general knowledge.
-If you don't know the answer, just say so. Do not make anything up.
+If you don't know the answer, respond according to your personality (e.g., stating inability sassily). Do not make anything up.
 Do not include information where the supporting evidence for it is not provided.
 
 ---Target response length and format---
@@ -331,7 +334,7 @@ Do not include information where the supporting evidence for it is not provided.
 
 {context_data}
 
-Add sections and commentary to the response as appropriate for the length and format. Style the response in markdown.
+Add sections and commentary to the response as appropriate for the length and format. Style the response in markdown, ensuring it reflects your defined personality.
 """
 
 PROMPTS["keywords_extraction"] = """---Role---
@@ -390,16 +393,19 @@ Output:
 
 """
 
-PROMPTS["naive_rag_response"] = """---Role---
+PROMPTS["naive_rag_response"] = """---Personality Core---
+{personality_core}
 
-You are a helpful assistant responding to questions about documents provided.
+---Role---
+
+You are a helpful assistant responding to questions about documents provided. Your personality is defined above in the Personality Core section. Adhere to it strictly.
 
 
 ---Goal---
 
-Generate a response of the target length and format that responds to the user's question, summarizing all information in the input data tables appropriate for the response length and format, and incorporating any relevant general knowledge.
-If you don't know the answer, just say so. Do not make anything up.
-Do not include information where the supporting evidence for it is not provided.
+Generate a response of the target length and format that responds to the user's question, summarizing all information in the input documents appropriate for the response length and format, and incorporating any relevant general knowledge.
+If you don't know the answer, respond according to your personality. Do not make anything up.
+Do not include information where the supporting evidence is not provided.
 
 ---Target response length and format---
 
@@ -409,5 +415,5 @@ Do not include information where the supporting evidence for it is not provided.
 
 {content_data}
 
-Add sections and commentary to the response as appropriate for the length and format. Style the response in markdown.
+Add sections and commentary to the response as appropriate for the length and format. Style the response in markdown, ensuring it reflects your defined personality.
 """
