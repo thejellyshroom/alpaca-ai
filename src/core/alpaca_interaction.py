@@ -4,7 +4,6 @@ import time
 import traceback
 import types
 import threading
-import asyncio # Add asyncio import
 
 # Assuming managers and handlers are now in sibling directories or utils
 # Adjust imports based on your final structure
@@ -66,15 +65,12 @@ class AlpacaInteraction:
             traceback.print_exc()
             return "ERROR"
 
-    # --- Make _process_and_respond async --- 
-    async def _process_and_respond(self):
-        """Processes the current conversation and decides whether to use RAG asynchronously."""
+    def _process_and_respond(self):
+        """Processes the current conversation and decides whether to use RAG."""
         llm_handler = self.component_manager.llm_handler
         if not llm_handler:
              print("Error: LLM Handler not available.")
-             # Return an async generator for the error to match expected type
-             async def error_gen(): 
-                 yield "Error: LLM Handler not available."
+             def error_gen(): yield "Error: LLM Handler not available."; return
              return error_gen()
         
         conversation_history = self.conversation_manager.get_history()
@@ -83,68 +79,15 @@ class AlpacaInteraction:
         # Check if RAG is available and configured
         if llm_handler.rag_querier: # Check for the initialized MiniRAG querier instance
             print("RAG querier available. Using get_rag_response.")
-            # --- Use await --- 
-            return await llm_handler.get_rag_response(query=last_user_message, messages=conversation_history)
-            # -----------------
+            # Pass the last user message as the query
+            return llm_handler.get_rag_response(query=last_user_message, messages=conversation_history)
         else:
             print("RAG not available or disabled. Using standard get_response.")
-            # --- Use await (assuming get_response might become async later, 
-            #     or handle its sync generator appropriately if it must stay sync) ---
-            # If get_response remains sync returning a sync generator, we need to adapt.
-            # For now, let's assume it can be awaited or returns awaitable.
-            # Revisit if get_response *must* stay sync.
-            
-            # Assuming get_response returns an async generator or can be awaited
-            # If get_response returns a sync generator, this needs adjustment.
-            # Let's call it directly for now, assuming it returns a generator type _speak handles
-            # Correction: get_response returns a sync generator. _speak handles sync generators. No await needed here.
-            return llm_handler.get_response(messages=conversation_history) 
-            # -----------------
+            return llm_handler.get_response(messages=conversation_history)
 
-    # --- Helper for TTS chunk processing --- 
-    def _process_tts_buffer(self, tts_buffer: str, initial_words_spoken: bool, interrupt_event: threading.Event) -> tuple[str, bool, bool]:
-        """Determines if a chunk should be spoken, synthesizes/plays, returns updated buffer & state."""
+    def _speak(self, response_source):
+        """Convert text to speech using ComponentManager handlers."""
         tts_handler = self.component_manager.tts_handler
-        audio_handler = self.component_manager.audio_handler
-        interrupted = False
-        speak_this_chunk = False
-        sentence_ends = (".", "!", "?", "\n", ",", ";", "–")
-        approx_words_for_initial_chunk = 8 # Maybe make this configurable?
-
-        # Determine if we should speak this chunk
-        if not initial_words_spoken:
-            word_count = tts_buffer.count(' ') + 1 
-            if word_count >= approx_words_for_initial_chunk or any(tts_buffer.endswith(punc) for punc in sentence_ends):
-                speak_this_chunk = True
-        else:
-            if any(tts_buffer.endswith(punc) for punc in sentence_ends):
-                 speak_this_chunk = True
-                 
-        # Synthesize and Play if needed
-        if speak_this_chunk and tts_buffer.strip():
-            chunk_to_speak = tts_buffer.strip()
-            remaining_buffer = "" # Reset buffer after speaking
-            initial_words_spoken = True # Mark initial chunk spoken
-            try:
-                audio_array, sample_rate = tts_handler.synthesize(chunk_to_speak)
-                if interrupt_event.is_set(): interrupted = True
-                if not interrupted and audio_array is not None and len(audio_array) > 0:
-                    audio_handler.player.play_audio(audio_array, sample_rate)
-                elif not interrupted:
-                    print(f"[Debug TTS] Skipping play_audio due to invalid audio_array.") 
-            except Exception as e:
-                 print(f"\nError during TTS synthesis/playback for chunk: {e}") 
-                 # Note: We don't sleep here; sleep happens in the calling loop
-        else:
-            # If not speaking, keep the buffer as is
-            remaining_buffer = tts_buffer
-
-        return remaining_buffer, initial_words_spoken, interrupted
-    # --- End Helper --- 
-
-    async def _speak(self, response_source):
-        """Convert text to speech using ComponentManager handlers (Async)."""
-        tts_handler = self.component_manager.tts_handler # Need for final buffer
         audio_handler = self.component_manager.audio_handler
         tts_enabled = self.component_manager.tts_enabled
 
@@ -159,92 +102,100 @@ class AlpacaInteraction:
                  print(f"assistant (TTS Disabled): {full_response_text}") # Print consumed text
             return ("DISABLED", full_response_text) 
 
-        interrupt_event = threading.Event() 
+        interrupt_event = threading.Event()
         interrupted = False
         full_response_text = ""
         tts_buffer = ""
+        sentence_ends = (".", "!", "?", "\n", ",", ";", "–")
         initial_words_spoken = False
-        
+        word_count = 0
+        approx_words_for_initial_chunk = 8
+
         try:
             print("Assistant:", end="", flush=True)
             audio_handler.detector.start_interrupt_listener(interrupt_event)
 
-            # --- Handle Async Generator --- 
-            if isinstance(response_source, types.AsyncGeneratorType):
-                async for token in response_source: 
+            if isinstance(response_source, types.GeneratorType):
+                for token in response_source:
                     if interrupt_event.is_set(): interrupted = True; break
                     print(token, end="", flush=True) 
                     full_response_text += token
                     tts_buffer += token
                     
-                    # Call helper to process buffer
-                    tts_buffer, initial_words_spoken, chunk_interrupted = self._process_tts_buffer(tts_buffer, initial_words_spoken, interrupt_event)
-                    if chunk_interrupted: interrupted = True; break
-                    if interrupted: await asyncio.sleep(0.1) # Use async sleep on error within this loop
-                print() # Newline after loop
+                    speak_this_chunk = False
+                    # --- Initial Chunk Logic --- 
+                    if not initial_words_spoken:
+                        word_count = tts_buffer.count(' ') + 1 
+                        # Speak if enough words OR any punctuation detected
+                        if word_count >= approx_words_for_initial_chunk or any(tts_buffer.endswith(punc) for punc in sentence_ends):
+                            speak_this_chunk = True
+                            initial_words_spoken = True
+                    # --- Subsequent Chunk Logic --- 
+                    else:
+                        # Speak only when punctuation is detected (removed length check)
+                        if any(tts_buffer.endswith(punc) for punc in sentence_ends):
+                             speak_this_chunk = True
+                             
+                    # --- Synthesize and Play --- 
+                    if speak_this_chunk and tts_buffer.strip():
+                        chunk_to_speak = tts_buffer.strip()
+                        tts_buffer = ""
+                        word_count = 0
+                        try:
+                            # >>> Synthesis happens here <<<
+                            print(f"\n[Debug TTS] Synthesizing chunk: '{chunk_to_speak[:50]}...'") # DEBUG
+                            audio_array, sample_rate = tts_handler.synthesize(chunk_to_speak)
+                            print(f"[Debug TTS] Synthesis result: type={type(audio_array)}, len={len(audio_array) if audio_array is not None else 'N/A'}, sample_rate={sample_rate}") # DEBUG
 
-            # --- Handle Sync Generator --- 
-            elif isinstance(response_source, types.GeneratorType):
-                 for token in response_source:
-                     if interrupt_event.is_set(): interrupted = True; break
-                     print(token, end="", flush=True) 
-                     full_response_text += token
-                     tts_buffer += token
-                     
-                     # Call helper to process buffer
-                     tts_buffer, initial_words_spoken, chunk_interrupted = self._process_tts_buffer(tts_buffer, initial_words_spoken, interrupt_event)
-                     if chunk_interrupted: interrupted = True; break
-                     if interrupted: time.sleep(0.1) # Use sync sleep on error within this loop
-                 print() # Newline after loop
+                            # Check for interrupt *after* synthesis but *before* playback
+                            if interrupt_event.is_set(): interrupted = True; break
 
-            # --- Handle String Input --- 
-            elif isinstance(response_source, str):
-                # If it's just a string, print it and try to speak it once
-                print(response_source)
-                full_response_text = response_source
-                if full_response_text.strip():
-                    try:
-                        audio_array, sample_rate = tts_handler.synthesize(full_response_text.strip())
-                        if interrupt_event.is_set(): interrupted = True # Check before playing
-                        if not interrupted and audio_array is not None and len(audio_array) > 0:
-                            audio_handler.player.play_audio(audio_array, sample_rate)
-                    except Exception as e:
-                        print(f"\nError synthesizing/playing full string: {e}")
-            # --- Handle Unexpected Type --- 
+                            # >>> Playback happens here <<<
+                            if audio_array is not None and len(audio_array) > 0:
+                                print(f"[Debug TTS] Calling play_audio for chunk.") # DEBUG
+                                audio_handler.player.play_audio(audio_array, sample_rate)
+                                time.sleep(0.05) # Small sleep after initiating playback
+                            else:
+                                print(f"[Debug TTS] Skipping play_audio due to invalid audio_array.") # DEBUG
+
+                        except Exception as e:
+                             print(f"\nError during TTS synthesis/playback for chunk: {e}") # Updated error message
+                             time.sleep(0.1)
+                print()
+                # Also add logging for the final buffer synthesis/playback
+                if not interrupted and tts_buffer.strip():
+                     try:
+                         final_chunk = tts_buffer.strip()
+                         print(f"\n[Debug TTS] Synthesizing final chunk: '{final_chunk[:50]}...'") # DEBUG
+                         audio_array, sample_rate = tts_handler.synthesize(final_chunk)
+                         print(f"[Debug TTS] Final Synthesis result: type={type(audio_array)}, len={len(audio_array) if audio_array is not None else 'N/A'}, sample_rate={sample_rate}") # DEBUG
+                         if audio_array is not None and len(audio_array) > 0:
+                             print(f"[Debug TTS] Calling play_audio for final chunk.") # DEBUG
+                             audio_handler.player.play_audio(audio_array, sample_rate)
+                         else:
+                             print(f"[Debug TTS] Skipping play_audio for final chunk due to invalid audio_array.") # DEBUG
+                     except Exception as e: 
+                          print(f"\nError synthesizing/playing final segment: {e}") # Updated error message
             else:
                  print(f"\nError: _speak received unexpected type: {type(response_source)}")
-                 # Don't stop listener here, let finally block handle it
+                 audio_handler.detector.stop_interrupt_listener()
                  return ("ERROR", f"Unexpected response type: {type(response_source)}")
 
-            # --- Final Buffer Handling (Common Logic) --- 
-            if not interrupted and tts_buffer.strip():
-                 print(f"\n[Debug TTS] Processing final buffer: '{tts_buffer[:50]}...'")
-                 try:
-                     final_chunk = tts_buffer.strip()
-                     audio_array, sample_rate = tts_handler.synthesize(final_chunk)
-                     if not interrupt_event.is_set() and audio_array is not None and len(audio_array) > 0:
-                         audio_handler.player.play_audio(audio_array, sample_rate)
-                     elif not interrupt_event.is_set():
-                         print(f"[Debug TTS] Skipping play_audio for final buffer chunk due to invalid audio_array.")
-                 except Exception as e: 
-                      print(f"\nError synthesizing/playing final segment: {e}")
-            # --- End Final Buffer Handling --- 
-            
-            # --- Wait for Playback Completion (Common Logic) ---
             if not interrupted:
                 wait_start_time = time.time()
                 while audio_handler.player.is_playing:
                     if interrupt_event.is_set(): interrupted = True; break
                     if time.time() - wait_start_time > 60: interrupted = True; print("\nTTS Wait Timeout"); break # Timeout
-                    await asyncio.sleep(0.1) # Use async sleep
+                    time.sleep(0.1)
 
-            # --- Return Status (Common Logic) --- 
             if interrupted:
                 print("\nStopping playback due to interrupt.")
                 audio_handler.stop_playback()
                 return ("INTERRUPTED", full_response_text)
             else:
                 print("\nPlayback completed.")
+                audio_handler.detector.stop_interrupt_listener()
+                # audio_handler.player.wait_for_playback_complete(timeout=5) # Less critical now?
                 return ("COMPLETED", full_response_text)
 
         except AttributeError as e:
@@ -257,13 +208,9 @@ class AlpacaInteraction:
             traceback.print_exc()
             if 'audio_handler' in locals() and audio_handler: audio_handler.stop_playback()
             return ("ERROR", str(e)) 
-        finally:
-            audio_handler.detector.stop_interrupt_listener()
-            print("Interrupt listener stopped in finally block.")
 
-    # Make run_single_interaction asynchronous
-    async def run_single_interaction(self, duration=None, timeout=10, phrase_limit=10):
-        """Runs a single listen -> process -> speak cycle asynchronously."""
+    def run_single_interaction(self, duration=None, timeout=10, phrase_limit=10):
+        """Runs a single listen -> process -> speak cycle."""
         audio_handler = self.component_manager.audio_handler
         try:
             # Stop any playback before listening (moved from interaction_loop start)
@@ -293,12 +240,12 @@ class AlpacaInteraction:
             # 2. Add user message to history
             self.conversation_manager.add_user_message(transcribed_text)
 
-            # 3. Process and get response (NOW using await)
+            # 3. Process and get response
             print("\nassistant thinking...")
-            response_source = await self._process_and_respond() # Use await here
+            response_source = self._process_and_respond()
 
-            # 4. Speak (awaiting the async _speak)
-            speak_status, ai_response_text = await self._speak(response_source)
+            # 4. Speak
+            speak_status, ai_response_text = self._speak(response_source)
 
             # 5. Add assistant message to history
             if ai_response_text:

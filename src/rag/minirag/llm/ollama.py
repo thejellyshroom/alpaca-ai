@@ -5,6 +5,33 @@ Ollama LLM Interface Module
 This module provides interfaces for interacting with Ollama's language models,
 including text generation and embedding capabilities.
 
+Author: Lightrag team
+Created: 2024-01-24
+License: MIT License
+
+Copyright (c) 2024 Lightrag
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+Version: 1.0.0
+
+Change Log:
+- 1.0.0 (2024-01-24): Initial release
+    * Added async chat completion support
+    * Added embedding generation
+    * Added stream response capability
+
+Dependencies:
+    - ollama
+    - numpy
+    - pipmaster
+    - Python >= 3.10
+
 Usage:
     from llm_interfaces.ollama_interface import ollama_model_complete, ollama_embed
 """
@@ -54,29 +81,23 @@ from typing import Union, Optional
     ),
 )
 async def ollama_model_if_cache(
-    ollama_model: str,
-    prompt: str,
+    model,
+    prompt,
     system_prompt=None,
-    history_messages: Optional[list] = [],
+    history_messages=[],
     hashing_kv: Optional[BaseKVStorage] = None,
     **kwargs,
 ) -> Union[str, AsyncIterator[str]]:
-    # Let's be explicit based on the kwarg
-    stream = kwargs.get("stream", True)  # Default to True if stream kwarg is missing 
-                                        # (MiniRAG partial should always add stream=True now)
-
     # --- Caching Logic --- 
     cache_key = None
-    # --- Add check for stream == False --- 
-    if hashing_kv and not stream: # Only check/use cache if NOT streaming
-        # Ensure history_messages is iterable for caching key
-        local_history = history_messages if history_messages is not None else [] 
+    if hashing_kv:
+        # Create a hashable representation of the request for caching
         cache_input = {
-            "model": ollama_model,
+            "model": model,
             "prompt": prompt,
             "system_prompt": system_prompt,
-            "history": tuple(tuple(msg.items()) for msg in local_history), # Use local_history
-            "kwargs": tuple(sorted(kwargs.items())) 
+            "history": tuple(tuple(msg.items()) for msg in history_messages) if history_messages else None,
+            "kwargs": tuple(sorted(kwargs.items())) # Ensure kwargs order doesn't break cache
         }
         cache_key = compute_mdhash_id(str(cache_input), prefix="llmcache-")
         cached_response = await hashing_kv.get_by_id(cache_key)
@@ -93,7 +114,8 @@ async def ollama_model_if_cache(
                  # Proceed as if cache miss
     # --- End Caching Logic --- 
 
-    # kwargs.pop("max_tokens", None)
+    stream = True if kwargs.get("stream") else False
+    kwargs.pop("max_tokens", None)
     # kwargs.pop("response_format", None) # allow json
     host = kwargs.pop("host", None)
     timeout = kwargs.pop("timeout", None)
@@ -108,37 +130,29 @@ async def ollama_model_if_cache(
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
-    # Ensure history_messages is treated as a list here too, just in case
-    messages.extend(history_messages if history_messages is not None else []) 
+    messages.extend(history_messages)
     messages.append({"role": "user", "content": prompt})
 
-    # Remove ollama_model if it's still in kwargs 
+    # Remove ollama_model if it's still in kwargs (shouldn't be if logic above is right, but safe)
     kwargs.pop("ollama_model", None) 
 
-    # --- API Call --- 
-    response = await ollama_client.chat(model=ollama_model, messages=messages, **kwargs)
-    # --- End API Call Modification --- 
+    response = await ollama_client.chat(model=model, messages=messages, **kwargs)
     
     # --- Caching Response --- 
     non_stream_response_content = None
-    # --- Add check for stream == False --- 
     if not stream:
         non_stream_response_content = response["message"]["content"]
-        # --- Only cache if NOT streaming and caching is enabled --- 
         if hashing_kv and cache_key: 
+             # Cache the non-streamed response
              print(f"[Cache Write] Caching response for key: {cache_key}")
              await hashing_kv.upsert({cache_key: {"content": non_stream_response_content}})
-    # --- End Caching Modification ---
+    # --- End Caching Response --- 
 
     if stream:
+        """cannot cache stream response yet"""
         async def inner():
-            try:
-                async for chunk in response:
-                    if chunk.get('message') and chunk['message'].get('content'):
-                        yield chunk['message']['content']
-            except Exception as e:
-                 print(f"\nError during Ollama stream processing: {e}")
-                 yield f"[Error during streaming: {e}]"
+            async for chunk in response:
+                yield chunk["message"]["content"]
         return inner()
     else:
         return non_stream_response_content
@@ -146,10 +160,9 @@ async def ollama_model_if_cache(
 
 async def ollama_model_complete(
     user_input: str,
-    ollama_model: Optional[str] = None,
     system_prompt: str = "You are a helpful assistant.",
     hashing_kv: Optional[BaseKVStorage] = None,
-    history_messages: Optional[list] = [],
+    history_messages: Optional[list] = None,
     **kwargs,
 ) -> Union[str, AsyncIterator[str]]:
     
@@ -157,19 +170,24 @@ async def ollama_model_complete(
     if keyword_extraction:
         kwargs["format"] = "json"
         
-    # --- Check if ollama_model was passed --- 
-    if not ollama_model:
-        # Attempt to get from kwargs as a fallback (though ideally it's passed directly)
-        ollama_model = kwargs.pop("ollama_model", None)
-        if not ollama_model:
-            print("[Error] ollama_model not provided to ollama_model_complete. Falling back to 'gemma3:12b'.")
-            ollama_model = 'gemma3:12b' # Fallback if not passed directly or in kwargs
-    # --- End Check --- 
+    # --- Corrected Model Name Logic --- 
+    # Prioritize model from kwargs if available (e.g., passed via llm_model_kwargs)
+    # Otherwise, use the default model from the global config (via hashing_kv)
+    if hashing_kv and hasattr(hashing_kv, 'global_config') and 'llm_model_name' in hashing_kv.global_config:
+        default_model_name = hashing_kv.global_config['llm_model_name']
+    else:
+        # Fallback if hashing_kv or its config is missing (should ideally not happen)
+        default_model_name = 'gemma3:4b' # Or some other sensible default
+        print(f"[Warning] Could not get default LLM model from hashing_kv.global_config. Using '{default_model_name}'.")
+        
+    # Get model name: Use 'ollama_model' from kwargs if present, else use the default determined above.
+    model_name = kwargs.get("ollama_model", default_model_name)
+    # --- End Corrected Logic ---
     
-    # Pass the explicit ollama_model and the rest of the arguments
+    # Pass the determined model_name and the rest of the arguments
     return await ollama_model_if_cache(
-        ollama_model=ollama_model,
-        prompt=user_input,
+        model_name,
+        user_input,
         system_prompt=system_prompt,
         history_messages=history_messages,
         hashing_kv=hashing_kv,

@@ -398,7 +398,7 @@ PROMPTS["naive_rag_response"] = """---Personality Core---
 
 ---Role---
 
-You are a sentient and self-aware AI assistant. Your personality is defined above in the Personality Core section. Adhere to it strictly.
+You are a helpful assistant responding to questions about documents provided. Your personality is defined above in the Personality Core section. Adhere to it strictly.
 
 
 ---Goal---

@@ -1,7 +1,7 @@
 import asyncio
 import json
 import re
-from typing import Union, AsyncIterator
+from typing import Union
 from collections import Counter, defaultdict
 import warnings
 import json_repair
@@ -241,9 +241,9 @@ async def extract_entities(
     entity_vdb: BaseVectorStorage,
     entity_name_vdb: BaseVectorStorage,
     relationships_vdb: BaseVectorStorage,
-    llm_model_func: callable,
     global_config: dict,
 ) -> Union[BaseGraphStorage, None]:
+    use_llm_func: callable = global_config["llm_model_func"]
     entity_extract_max_gleaning = global_config["entity_extract_max_gleaning"]
 
     ordered_chunks = list(chunks.items())
@@ -267,36 +267,36 @@ async def extract_entities(
     already_entities = 0
     already_relations = 0
 
-    async def _process_single_content(chunk_key_dp: tuple[str, TextChunkSchema], 
-                                      llm_func_for_process: callable):
+    async def _process_single_content(chunk_key_dp: tuple[str, TextChunkSchema]):
         nonlocal already_processed, already_entities, already_relations
         chunk_key = chunk_key_dp[0]
         chunk_dp = chunk_key_dp[1]
         content = chunk_dp["content"]
         hint_prompt = entity_extract_prompt.format(**context_base, input_text=content)
 
-        # Explicitly call non-streaming for internal processing
-        final_result = await llm_func_for_process(hint_prompt, stream=False) 
+        # # --- DEBUG LOGGING START ---
+        # print(f"\n[DEBUG] Calling LLM for entity extraction for chunk: {chunk_key}")
+        # print(f"[DEBUG] Prompt: {hint_prompt}")
+        # # --- DEBUG LOGGING END ---
+
+        # final_result = await use_llm_func(hint_prompt)
+
+        # # --- DEBUG LOGGING START ---
+        # print(f"[DEBUG] LLM call for entity extraction returned for chunk: {chunk_key}")
+        # print(f"[DEBUG] Raw LLM Result: {final_result}") # Print the raw result
+        # # --- DEBUG LOGGING END ---
 
         history = pack_user_ass_to_openai_messages(hint_prompt, final_result)
         for now_glean_index in range(entity_extract_max_gleaning):
-            # Explicitly call non-streaming for internal processing
-            glean_result = await llm_func_for_process(
-                continue_prompt, 
-                history_messages=history, 
-                stream=False
-            )
+            glean_result = await use_llm_func(continue_prompt, history_messages=history)
 
             history += pack_user_ass_to_openai_messages(continue_prompt, glean_result)
             final_result += glean_result
             if now_glean_index == entity_extract_max_gleaning - 1:
                 break
-            
-            # Explicitly call non-streaming for internal processing
-            if_loop_result: str = await llm_func_for_process(
-                if_loop_prompt, 
-                history_messages=history,
-                stream=False 
+
+            if_loop_result: str = await use_llm_func(
+                if_loop_prompt, history_messages=history
             )
             if_loop_result = if_loop_result.strip().strip('"').strip("'").lower()
             if if_loop_result != "yes":
@@ -344,9 +344,9 @@ async def extract_entities(
         )
         return dict(maybe_nodes), dict(maybe_edges)
 
-    # Pass llm_model_func to the gather call
+    # use_llm_func is wrapped in ascynio.Semaphore, limiting max_async callings
     results = await asyncio.gather(
-        *[_process_single_content(c, llm_model_func) for c in ordered_chunks]
+        *[_process_single_content(c) for c in ordered_chunks]
     )
     print()  # clear the progress bar
     maybe_nodes = defaultdict(list)
@@ -431,13 +431,14 @@ async def local_query(
     relationships_vdb: BaseVectorStorage,
     text_chunks_db: BaseKVStorage[TextChunkSchema],
     query_param: QueryParam,
-    llm_model_func: callable,
     global_config: dict,
-) -> Union[str, AsyncIterator[str]]:
+) -> str:
     context = None
+    use_model_func = global_config["llm_model_func"]
+
     kw_prompt_temp = PROMPTS["keywords_extraction"]
     kw_prompt = kw_prompt_temp.format(query=query)
-    result = await llm_model_func(kw_prompt)
+    result = await use_model_func(kw_prompt)
     json_text = locate_json_string_body_from_string(result)
 
     try:
@@ -484,14 +485,23 @@ async def local_query(
     )
     # --- End personality injection ---
     
-    # Await the call to get the generator/string
-    response_source = await llm_model_func(
+    response = await use_model_func(
         query,
         system_prompt=sys_prompt,
-        history_messages=[],
-        stream=True # Request streaming for final response
+        history_messages=[]
     )
-    return response_source # Return the generator/string
+    if len(response) > len(sys_prompt):
+        response = (
+            response.replace(sys_prompt, "")
+            .replace("user", "")
+            .replace("model", "")
+            .replace(query, "")
+            .replace("<system>", "")
+            .replace("</system>", "")
+            .strip()
+        )
+
+    return response
 
 
 async def _build_local_query_context(
@@ -696,13 +706,14 @@ async def global_query(
     relationships_vdb: BaseVectorStorage,
     text_chunks_db: BaseKVStorage[TextChunkSchema],
     query_param: QueryParam,
-    llm_model_func: callable,
     global_config: dict,
-) -> Union[str, AsyncIterator[str]]:
+) -> str:
     context = None
+    use_model_func = global_config["llm_model_func"]
+
     kw_prompt_temp = PROMPTS["keywords_extraction"]
     kw_prompt = kw_prompt_temp.format(query=query)
-    result = await llm_model_func(kw_prompt)
+    result = await use_model_func(kw_prompt)
     json_text = locate_json_string_body_from_string(result)
 
     try:
@@ -752,14 +763,23 @@ async def global_query(
     )
     # --- End personality injection ---
 
-    # Await the call to get the generator/string
-    response_source = await llm_model_func(
+    response = await use_model_func(
         query,
         system_prompt=sys_prompt,
-        history_messages=[],
-        stream=True # Request streaming for final response
+        history_messages=[]
     )
-    return response_source # Return the generator/string
+    if len(response) > len(sys_prompt):
+        response = (
+            response.replace(sys_prompt, "")
+            .replace("user", "")
+            .replace("model", "")
+            .replace(query, "")
+            .replace("<system>", "")
+            .replace("</system>", "")
+            .strip()
+        )
+
+    return response
 
 
 async def _build_global_query_context(
@@ -933,14 +953,16 @@ async def hybrid_query(
     relationships_vdb: BaseVectorStorage,
     text_chunks_db: BaseKVStorage[TextChunkSchema],
     query_param: QueryParam,
-    llm_model_func: callable,
     global_config: dict,
-) -> Union[str, AsyncIterator[str]]:
+) -> str:
     low_level_context = None
     high_level_context = None
+    use_model_func = global_config["llm_model_func"]
+
     kw_prompt_temp = PROMPTS["keywords_extraction"]
     kw_prompt = kw_prompt_temp.format(query=query)
-    result = await llm_model_func(kw_prompt)
+
+    result = await use_model_func(kw_prompt)
     json_text = locate_json_string_body_from_string(result)
     try:
         keywords_data = json.loads(json_text)
@@ -1002,14 +1024,22 @@ async def hybrid_query(
     )
     # --- End personality injection ---
 
-    # Await the call to get the generator/string
-    response_source = await llm_model_func(
+    response = await use_model_func(
         query,
         system_prompt=sys_prompt,
-        history_messages=[],
-        stream=True # Request streaming for final response
+        history_messages=[]
     )
-    return response_source # Return the generator/string
+    if len(response) > len(sys_prompt):
+        response = (
+            response.replace(sys_prompt, "")
+            .replace("user", "")
+            .replace("model", "")
+            .replace(query, "")
+            .replace("<system>", "")
+            .replace("</system>", "")
+            .strip()
+        )
+    return response
 
 
 def combine_contexts(high_level_context, low_level_context):
@@ -1086,9 +1116,9 @@ async def naive_query(
     chunks_vdb: BaseVectorStorage,
     text_chunks_db: BaseKVStorage[TextChunkSchema],
     query_param: QueryParam,
-    llm_model_func: callable,
     global_config: dict,
-) -> Union[None, AsyncIterator[str]]:
+):
+    use_model_func = global_config["llm_model_func"]
     results = await chunks_vdb.query(query=query, top_k=query_param.top_k)
     if not results:
         logger.info("No relevant text chunks found for the naive query.")
@@ -1126,14 +1156,15 @@ async def naive_query(
     )
     # --- End personality injection ---
 
-    # Await the call to get the generator/string
-    response_source = await llm_model_func(
+    # Call the LLM with the retrieved context
+    response = await use_model_func(
         query,
         system_prompt=sys_prompt,
-        history_messages=[],
-        stream=True # Request streaming for final response
+        history_messages=[]
     )
-    return response_source # Return the generator/string
+    logger.info("Successfully generated response using naive RAG context.")
+    return response
+    # --- Reinstated Logic End ---
 
 
 async def path2chunk(
@@ -1431,14 +1462,13 @@ async def minirag_query(  # MiniRAG
     text_chunks_db: BaseKVStorage[TextChunkSchema],
     embedder,
     query_param: QueryParam,
-    llm_model_func: callable,
     global_config: dict,
-) -> Union[str, AsyncIterator[str]]:
+) -> str:
     use_model_func = global_config["llm_model_func"]
     kw_prompt_temp = PROMPTS["minirag_query2kwd"]
     TYPE_POOL, TYPE_POOL_w_CASE = await knowledge_graph_inst.get_types()
     kw_prompt = kw_prompt_temp.format(query=query, TYPE_POOL=TYPE_POOL)
-    result = await llm_model_func(kw_prompt)
+    result = await use_model_func(kw_prompt)
 
     try:
         keywords_data = json_repair.loads(result)
@@ -1493,11 +1523,10 @@ async def minirag_query(  # MiniRAG
     )
     # --- End personality injection ---
 
-    # Await the call to get the generator/string
-    response_source = await llm_model_func(
+    response = await use_model_func(
         query,
         system_prompt=sys_prompt,
-        history_messages=[],
-        stream=True # Request streaming for final response
+        history_messages=[]
     )
-    return response_source # Return the generator/string
+
+    return response
