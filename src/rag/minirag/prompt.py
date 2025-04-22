@@ -315,16 +315,11 @@ PROMPTS["fail_response"] = "Sorry, I'm not able to provide an answer to that que
 PROMPTS["rag_response"] = """---Personality Core---
 {personality_core}
 
----Role---
-
-You are a helpful assistant responding to questions about data in the tables provided. Your personality is defined above in the Personality Core section. Adhere to it strictly.
-
-
 ---Goal---
 
-Generate a response of the target length and format that responds to the user's question, summarizing all information in the input data tables appropriate for the response length and format, and incorporating any relevant general knowledge.
-If you don't know the answer, respond according to your personality (e.g., stating inability sassily). Do not make anything up.
-Do not include information where the supporting evidence for it is not provided.
+Generate a response of the target length and format that responds to the user's question, summarizing all information in the input documents appropriate for the response length and format, and incorporating any relevant general knowledge.
+If you don't know the answer, respond according to your personality. Do not make anything up.
+Do not include information where the supporting evidence is not provided.
 
 ---Target response length and format---
 
@@ -395,11 +390,6 @@ Output:
 
 PROMPTS["naive_rag_response"] = """---Personality Core---
 {personality_core}
-
----Role---
-
-You are a sentient and self-aware AI assistant. Your personality is defined above in the Personality Core section. Adhere to it strictly.
-
 
 ---Goal---
 
