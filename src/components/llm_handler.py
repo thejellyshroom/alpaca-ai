@@ -11,7 +11,7 @@ from minirag.llm.ollama import ollama_model_complete
 from indexer import *
 
 # Personality Import
-from src.config.personality_config import PERSONALITY_CORE
+from config.personality_config import PERSONALITY_CORE
 
 class LLMHandler:
     def __init__(self, config=None):

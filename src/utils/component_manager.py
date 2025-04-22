@@ -1,10 +1,10 @@
 # src/core/component_manager.py
 
 # Actual handler imports
-from ..components.audio_handler import AudioHandler
-from ..components.stt_handler import Transcriber
-from ..components.llm_handler import LLMHandler
-from ..components.tts_handler import TTSHandler
+from components.audio_handler import AudioHandler
+from components.stt_handler import Transcriber
+from components.llm_handler import LLMHandler
+from components.tts_handler import TTSHandler
 import traceback
 import gc
 import os

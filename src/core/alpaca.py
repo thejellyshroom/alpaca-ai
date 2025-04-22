@@ -1,6 +1,6 @@
-from ..utils.conversation_manager import ConversationManager
-from ..utils.component_manager import ComponentManager
-from .alpaca_interaction import AlpacaInteraction
+from utils.conversation_manager import ConversationManager
+from utils.component_manager import ComponentManager
+from core.alpaca_interaction import AlpacaInteraction
 import time
 
 class Alpaca:

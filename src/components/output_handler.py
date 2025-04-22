@@ -6,9 +6,9 @@ import asyncio
 import sys
 from typing import Optional
 
-from ..utils.component_manager import ComponentManager
-from .tts_handler import TTSHandler
-from .audio_handler import AudioHandler
+from utils.component_manager import ComponentManager
+from components.tts_handler import TTSHandler
+from components.audio_handler import AudioHandler
 
 class OutputHandler:
     """Handles converting LLM responses to speech and managing playback with interruptions."""

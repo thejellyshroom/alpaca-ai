@@ -1,5 +1,18 @@
 import sys
 import os
+
+# --- Add src to sys.path --- Must be before src imports!
+project_root = os.path.dirname(os.path.abspath(__file__))
+src_path = os.path.join(project_root, 'src')
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
+
+# add rag to sys.path
+rag_path = os.path.join(project_root, 'src/rag')
+if rag_path not in sys.path:
+    sys.path.insert(0, rag_path)
+# ---------------------------
+
 import asyncio
 import signal
 import traceback
@@ -7,17 +20,12 @@ import argparse
 import sys
 from dotenv import load_dotenv
 
-from src.core.alpaca import Alpaca
-from src.utils.config_loader import ConfigLoader
-from src.core.voice_loop import run_voice_interaction_loop
-from src.core.text_loop import run_text_interaction_loop
-from src.rag.indexer import run_indexing
+from core.alpaca import Alpaca
+from utils.config_loader import ConfigLoader
+from core.voice_loop import run_voice_interaction_loop
+from core.text_loop import run_text_interaction_loop
+from rag.indexer import run_indexing
 from utils.summarizer import summarize_conversation, save_summary
-
-project_root = os.path.dirname(os.path.abspath(__file__))
-rag_path = os.path.join(project_root, 'src', 'rag')
-if rag_path not in sys.path:
-    sys.path.insert(0, rag_path)
     
 async def main():
     load_dotenv()

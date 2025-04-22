@@ -5,7 +5,7 @@ from datetime import datetime
 import os
 import traceback
 
-from ..components.llm_handler import LLMHandler 
+from components.llm_handler import LLMHandler 
 from .conversation_manager import ConversationManager 
 
 SUMMARY_PROMPT_TEMPLATE = """

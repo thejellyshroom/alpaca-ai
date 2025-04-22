@@ -2,8 +2,8 @@
 
 import json
 import os
-from src.utils.override_maps import ASR_OVERRIDE_MAP, TTS_OVERRIDE_MAP, LLM_OVERRIDE_MAP
-from src.utils.override_maps import apply_overrides
+from utils.override_maps import ASR_OVERRIDE_MAP, TTS_OVERRIDE_MAP, LLM_OVERRIDE_MAP
+from utils.override_maps import apply_overrides
 class ConfigLoader:
     def __init__(self):
         """Initialize the config loader."""
