@@ -163,8 +163,9 @@ class AlpacaInteraction:
         except Exception as e:
             print(f"\nCritical error in text interaction handler: {e}")
             traceback.print_exc()
-            # Return an error message to be displayed to the user
+            # Capture the error message before defining the generator
+            error_message = str(e)
             # Return an async generator yielding the error message
             async def error_gen():
-                yield f"[Critical Error: {e}]"
+                yield f"[Critical Error: {error_message}]" # Use the captured message
             return error_gen() 

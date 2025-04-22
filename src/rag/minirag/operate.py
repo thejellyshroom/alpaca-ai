@@ -1116,7 +1116,13 @@ async def naive_query(
     # Combine the content of the retrieved chunks
     context_data = "\n\n".join(valid_chunks)
 
-    # --- Add personality injection --- 
+    # --- Add check for only_need_context --- #
+    if query_param.only_need_context:
+        logger.info(f"Returning RAG context directly (naive mode). Length: {len(context_data)}")
+        return context_data # Return the context string directly
+    # --- End check --- #
+
+    # --- Add personality injection --- #
     sys_prompt_temp = PROMPTS["naive_rag_response"]
     personality_core = global_config.get("personality_core", "") # Get personality
     sys_prompt = sys_prompt_temp.format(
