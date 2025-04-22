@@ -86,7 +86,6 @@ async def main():
         timeout = assistant.timeout_arg
         phrase_limit = assistant.phrase_limit_arg
 
-        # --- Register Signal Handler --- 
         loop = asyncio.get_running_loop()
 
         # --- Create and Run Main Loop Task --- 

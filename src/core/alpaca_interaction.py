@@ -106,7 +106,13 @@ class AlpacaInteraction:
                  print("Error: Audio handler not available for interaction.")
                  return "ERROR", "Audio handler not initialized."
 
-            transcribed_text = self._listen(duration=duration, timeout=timeout)
+            # Run the synchronous _listen method in a separate thread
+            # _listen handles STT and returns the transcribed text or an error string
+            print("[Interaction] Running _listen in executor...") # Log
+            transcribed_text = await asyncio.to_thread(
+                self._listen, duration=duration, timeout=timeout
+            )
+            print(f"[Interaction] _listen result: '{transcribed_text[:50]}...'") # Log
             
             # Handle listen errors
             if transcribed_text in ["TIMEOUT_ERROR", "low_energy", "", "ERROR", None]:
