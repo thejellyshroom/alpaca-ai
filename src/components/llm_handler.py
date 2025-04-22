@@ -7,32 +7,14 @@ import traceback
 from datetime import datetime, timedelta
 import re
 import pathlib # Added for path manipulation
-
-# RAG Imports
 from minirag import MiniRAG, QueryParam
 from minirag.llm.ollama import ollama_model_complete
 from indexer import *
-
-# Personality Import
 from config.personality_config import PERSONALITY_CORE
 from minirag.prompt import PROMPTS
+from utils.conversation_manager import format_timedelta
 
-# --- Helper Function for time formatting ---
-def _format_timedelta(delta: timedelta) -> str:
-    """Formats timedelta into human-readable string (e.g., '5 minutes ago')."""
-    seconds = int(delta.total_seconds())
-    if seconds < 60:
-        return f"{seconds} seconds ago"
-    elif seconds < 3600:
-        minutes = seconds // 60
-        return f"{minutes} minute{'s' if minutes > 1 else ''} ago"
-    elif seconds < 86400:
-        hours = seconds // 3600
-        return f"{hours} hour{'s' if hours > 1 else ''} ago"
-    else:
-        days = seconds // 86400
-        return f"{days} day{'s' if days > 1 else ''} ago"
-# --- End Helper ---
+CONTEXT_LENGTH_LIMIT = os.getenv('CONTEXT_LENGTH_LIMIT', '5000')
 
 class LLMHandler:
     def __init__(self, config=None):
@@ -120,7 +102,7 @@ class LLMHandler:
                 timestamp_str = match.group(1)
                 last_interaction_time = datetime.strptime(timestamp_str, '%Y%m%d_%H%M%S')
                 time_delta = datetime.now() - last_interaction_time
-                context["time_since_last"] = _format_timedelta(time_delta)
+                context["time_since_last"] = format_timedelta(time_delta)
 
             # Read summary content (skip metadata lines)
             with open(latest_summary_file, "r", encoding="utf-8") as f:
@@ -141,37 +123,32 @@ class LLMHandler:
         print(f"Using Base LLM '{self.model_name}' with params: {self.params}")
         
         dynamic_context = self._get_dynamic_context()
-
-        # Prepare RAG context string for formatting
         rag_context_for_prompt = "None." # Default if no context
+
+        # --- Temporarily disable RAG context injection for testing --- #
         if rag_context and rag_context != PROMPTS["fail_response"]:
-            print("[Debug LLMHandler] Valid RAG context found.")
-            rag_context_for_prompt = rag_context
+            if len(rag_context) > CONTEXT_LENGTH_LIMIT:
+                rag_context_for_prompt = rag_context[:CONTEXT_LENGTH_LIMIT] + "... (truncated)"
+            else:
+                rag_context_for_prompt = rag_context
         else:
             print("[Debug LLMHandler] No valid RAG context found or provided.")
 
-        # Format the single personality prompt with all context
         formatted_personality = PERSONALITY_CORE.format(
-            time_since_last=dynamic_context["time_since_last"],
-            conversation_summary=dynamic_context["conversation_summary"],
-            rag_context=rag_context_for_prompt # Inject RAG context here
+            time_since_last=dynamic_context.get("time_since_last", "N/A"),
+            conversation_summary=dynamic_context.get("conversation_summary", "N/A"),
+            rag_context=rag_context_for_prompt
         )
 
-        # Prepare final messages list
         modified_messages = []
-        # Ensure system prompt is the first message
-        temp_messages = [m for m in messages if m['role'] != 'system'] # Remove existing system prompts
+        temp_messages = [m for m in messages if m['role'] != 'system']
         modified_messages.append({'role': 'system', 'content': formatted_personality})
-
-        # Add the rest of the non-system messages
         modified_messages.extend(temp_messages)
-
-        print(f"[Debug Personality] Using single dynamic system prompt: {modified_messages[0]['content'][:300]}...") # Increased length for debug
 
         try:
             response = ollama.chat(
                 model=self.model_name,
-                messages=modified_messages, # Use modified messages
+                messages=modified_messages,
                 stream=True,
                 options=self.params
             )
@@ -183,60 +160,19 @@ class LLMHandler:
              traceback.print_exc()
              yield f"[Error communicating with base LLM: {e}]" # Yield error message
                 
-    def _format_history_for_rag_query(self, messages: list[Dict[str, Any]], num_turns=2) -> str:
-        """Formats the last N turns of conversation for RAG query context."""
-        # Find the system prompt if it exists
-        system_prompt = ""
-        for msg in messages:
-            if msg['role'] == 'system':
-                # Use the *formatted* system prompt if available (contains dynamic context)
-                system_prompt = msg['content']
-                break
-            
-        # Get last N user/assistant messages (2*num_turns messages)
-        user_assistant_messages = [m for m in messages if m['role'] in ('user', 'assistant')]
-        recent_messages = user_assistant_messages[-(2*num_turns):]
-        
-        history_str = "\n".join([f"{msg['role'].capitalize()}: {msg['content']}" for msg in recent_messages])
-        
-        # Combine system prompt (if any) and recent history
-        # Avoid adding system prompt if it wasn't found or is just the base unformatted one
-        if system_prompt and system_prompt.strip().startswith("You are Alpaca"):
-             # Find the original query (last user message)
-             last_user_message = recent_messages[-1]['content'] if recent_messages and recent_messages[-1]['role'] == 'user' else ""
-             # Return history excluding the last user message, which will be appended as the main query
-             history_context = "\n".join([f"{msg['role'].capitalize()}: {msg['content']}" for msg in recent_messages[:-1]])
-             return f"Relevant Conversation History:\n{history_context}\n---" # Separator
-        else:
-             # Fallback if system prompt isn't formatted or found - just use recent turns
-             return f"Relevant Conversation History:\n{history_str}\n---" # Separator
-
     async def get_rag_response(self, query: str, messages: list[Dict[str, Any]]) -> AsyncIterator[str]:
-        """Uses MiniRAG to retrieve context based on query + history, then calls get_response to generate the final answer."""
+        """Uses MiniRAG to retrieve context based *only* on the latest query, then calls get_response to generate the final answer."""
         if not self.rag_querier:
-            print("Skipping RAG: Querier not available. Calling base LLM directly.")
-            # Fallback to base LLM directly without RAG context
             return self.get_response(messages=messages, rag_context=None)
 
-        # --- Prepare for RAG Context Retrieval --- #
-        rag_param = QueryParam(mode="naive", only_need_context=True) # Set mode and request only context
+        rag_param = QueryParam(mode="naive", only_need_context=True)
+        rag_query = query
 
-        # --- Construct combined query with history --- #
-        # We only need the message history here, not the fully formatted personality
-        # The dynamic personality formatting happens later in get_response
-        # Use the original messages list for history formatting
-        history_context_str = self._format_history_for_rag_query(messages, num_turns=2)
-        # Corrected f-string formatting
-        combined_query = f"{history_context_str}\nUser Query: {query}"
-        # --- End Construct Query --- #
-
-        print(f"Attempting RAG context retrieval (mode: {rag_param.mode}) with combined query...")
         retrieved_context = None
         try:
-            # Call aquery to get *only* the context string
             context_result = await self.rag_querier.aquery(
-                combined_query,
-                param=rag_param # Pass param with only_need_context=True
+                rag_query, # Pass only the latest query
+                param=rag_param
             )
 
             if isinstance(context_result, str) and context_result != PROMPTS["fail_response"]:
@@ -250,10 +186,6 @@ class LLMHandler:
         except Exception as e:
             print(f"\nError during RAG context retrieval: {e}")
             traceback.print_exc()
-            retrieved_context = None # Ensure context is None on error
-        # --- End RAG Context Retrieval --- #
+            retrieved_context = None
 
-        # --- Call Base LLM with or without RAG context --- #
-        # get_response will handle dynamic personality injection and adding the RAG context message if available.
-        print("Calling get_response to generate final answer...")
         return self.get_response(messages=messages, rag_context=retrieved_context)

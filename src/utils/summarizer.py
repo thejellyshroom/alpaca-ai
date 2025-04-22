@@ -10,20 +10,24 @@ from components.llm_handler import LLMHandler
 from .conversation_manager import ConversationManager 
 
 SUMMARY_PROMPT_TEMPLATE = """
-You are an objective summarization assistant.
-Given the following conversation history between a User and an AI Assistant (Alpaca), provide a concise summary focusing on:
-1. The main questions or topics initiated by the User.
-2. The key information, conclusions, or actions provided by the Assistant.
-3. Any notable shifts in topic or recurring themes.
-Keep the summary factual and neutral. Do not add any introductory or concluding remarks like "Here is the summary:".
+**TASK:** Objectively summarize the provided conversation history between a User and an AI Assistant.
 
-Conversation History:
+**STYLE REQUIREMENTS:**
+- Use a strictly neutral, factual, and objective tone.
+- Write in the third person (e.g., "The user asked...", "The assistant explained...").
+- DO NOT adopt the persona of the user or the assistant.
+- DO NOT evaluate the quality of the conversation or the participants' performance.
+- Focus *only* on summarizing the sequence of interactions, key topics, questions, answers, and stated goals or issues.
+- Keep the summary concise and focused on the interaction flow.
+- Do not add any introductory or concluding remarks like "Here is the summary:".
+
+**Conversation History:**
 {history_string}
 
-Concise Summary:
+**Concise, Objective, Third-Person Summary:**
 """
 
-SUMMARIZER_SYSTEM_PROMPT = {"role": "system", "content": "You are an objective summarization assistant tasked with creating a summary of a conversation. The summary should be able to capture the intricacies of the conversation and the key points that were discussed."}
+SUMMARIZER_SYSTEM_PROMPT = {"role": "system", "content": "You are an objective summarization engine. Your sole task is to create a neutral, third-person summary of the provided conversation text, focusing only on the interaction sequence and content. Adhere strictly to the formatting and style requirements provided in the user prompt. Do not inject any personality or evaluation."}
 
 def _format_history_for_prompt(history: list[dict]) -> str:
     """Formats conversation history into a readable string."""

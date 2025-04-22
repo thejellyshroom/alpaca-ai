@@ -1444,7 +1444,8 @@ async def minirag_query(  # MiniRAG
     kw_prompt_temp = PROMPTS["minirag_query2kwd"]
     TYPE_POOL, TYPE_POOL_w_CASE = await knowledge_graph_inst.get_types()
     kw_prompt = kw_prompt_temp.format(query=query, TYPE_POOL=TYPE_POOL)
-    result = await llm_model_func(kw_prompt)
+    # Explicitly request non-streaming response for keyword extraction
+    result = await llm_model_func(kw_prompt, stream=False)
 
     try:
         keywords_data = json_repair.loads(result)
