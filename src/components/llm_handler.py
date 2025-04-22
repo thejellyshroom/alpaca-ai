@@ -82,14 +82,11 @@ class LLMHandler:
         system_message_found = False
         for msg in messages:
             if msg['role'] == 'system':
-                # Prepend personality to existing system message
-                original_content = msg.get('content', '')
-                msg['content'] = f"{PERSONALITY_CORE}\n\n{original_content}"
+                msg['content'] = f"{PERSONALITY_CORE}"
                 system_message_found = True
                 break
         
         if not system_message_found:
-            # Insert personality as the system message if none exists
             messages.insert(0, {'role': 'system', 'content': PERSONALITY_CORE})
             
         print(f"[Debug Personality] System prompt for base LLM: {messages[0]['content'][:100]}...")
@@ -131,15 +128,7 @@ class LLMHandler:
             if answer_source is None or isinstance(answer_source, str): # Handle None or error string from RAG
                  fallback_reason = "no context found" if answer_source is None else f"RAG error: {answer_source}"
                  print(f"RAG query failed ({fallback_reason}). Falling back to base LLM with personality.")
-                 rag_failure_note = {
-                     "role": "system", 
-                     "content": f"{PERSONALITY_CORE}\n\n(Self-Correction: My knowledge base lookup failed ({fallback_reason}). I'll answer from general knowledge, but don't expect miracles. 🙄)"
-                 }
-                 non_system_messages = [m for m in messages if m['role'] != 'system']
-                 modified_messages = [rag_failure_note] + non_system_messages
-                 
-                 # Return the generator from the base LLM call (get_response handles streaming)
-                 return self.get_response(messages=modified_messages) 
+                 return self.get_response(messages=messages) 
             # ---> End Fallback Logic <--- 
 
             # --- Return the Async Generator Directly --- 
