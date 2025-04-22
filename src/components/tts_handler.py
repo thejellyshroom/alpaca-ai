@@ -142,8 +142,6 @@ class TTSHandler:
     
     def _synthesize_single(self, text):
         try:
-            # print(f"Synthesizing with speed: {self.speed:.2f}x, voice: {self.voice}")
-            
             generator = self.kokoro_pipeline(
                 text,
                 voice=self.voice,

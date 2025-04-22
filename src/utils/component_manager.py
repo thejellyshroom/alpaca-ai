@@ -26,7 +26,7 @@ class ComponentManager:
         self.transcriber = None
         self.llm_handler = None
         self.tts_handler = None
-        self.tts_enabled = False # Default to False
+        self.tts_enabled = False
 
         self.load_all_components() # Load components on initialization
 
@@ -34,7 +34,6 @@ class ComponentManager:
         """Load components based on the run mode."""
         print(f"\n--- Loading Components (Mode: {self.mode.upper()}) --- ")
         
-        # Always load LLM Handler
         self.load_llm_handler()
 
         # Conditionally load audio-related components
@@ -42,11 +41,10 @@ class ComponentManager:
             print("Loading audio components for VOICE mode...")
             self.load_audio_handler()
             self.load_stt()
-            self.load_tts_handler() # This sets self.tts_enabled if successful
+            self.load_tts_handler()
         else:
             print("Skipping audio components for TEXT mode.")
-            self.tts_enabled = False # Explicitly ensure TTS is disabled in text mode
-            # Ensure audio components are None if mode is text (in case of mode switch? belt-and-suspenders)
+            self.tts_enabled = False
             self.audio_handler = None
             self.transcriber = None
             self.tts_handler = None
@@ -146,33 +144,26 @@ class ComponentManager:
                 print(f"TTS Speed: {tts_speed}x")
             else:
                 print("TTS: Not Loaded or Disabled")
-            
-        # LLM (Already printed above)
-        # llm_model = getattr(self.llm_handler, 'model_name', 'N/A')
-        # print(f"LLM Model: {llm_model}")
         
         print("-------------------------")
 
     def cleanup(self):
         """Clean up all managed components by deleting them, checking if they exist."""
-        print("Cleaning up components in ComponentManager...")
-        # Only cleanup components that might have been loaded
-        if hasattr(self, 'tts_handler') and self.tts_handler: # Check existence before del
+        if hasattr(self, 'tts_handler') and self.tts_handler:
             print("Deleting TTS handler...")
             del self.tts_handler
             self.tts_handler = None
             self.tts_enabled = False
-        if hasattr(self, 'llm_handler') and self.llm_handler: # Check existence before del
+        if hasattr(self, 'llm_handler') and self.llm_handler:
              print("Deleting LLM handler...")
              del self.llm_handler
              self.llm_handler = None
-        if hasattr(self, 'transcriber') and self.transcriber: # Check existence before del
+        if hasattr(self, 'transcriber') and self.transcriber:
              print("Deleting Transcriber (STT handler)...")
              del self.transcriber
              self.transcriber = None
-        if hasattr(self, 'audio_handler') and self.audio_handler: # Check existence before del
+        if hasattr(self, 'audio_handler') and self.audio_handler:
             print("Deleting Audio handler...")
-            # Audio handler's __del__ should call player/detector cleanup
             del self.audio_handler
             self.audio_handler = None
             

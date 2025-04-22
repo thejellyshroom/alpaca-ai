@@ -8,9 +8,9 @@ import asyncio # Add asyncio import
 import soundfile as sf 
 import sys # Ensure sys is imported if used elsewhere
 
-from ..utils.component_manager import ComponentManager       # Corrected path assumed
-from ..utils.conversation_manager import ConversationManager # Corrected path assumed
-from ..components.output_handler import OutputHandler # Import the new handler
+from ..utils.component_manager import ComponentManager
+from ..utils.conversation_manager import ConversationManager
+from ..components.output_handler import OutputHandler
 
 class AlpacaInteraction:
     def __init__(self, component_manager: ComponentManager, conversation_manager: ConversationManager):

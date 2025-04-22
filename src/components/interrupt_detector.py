@@ -94,7 +94,6 @@ class InterruptDetector:
 
                     speech_prob = self._process_vad(audio_chunk_int16)
 
-                    # 3. Check for Activation (Both VAD and Energy thresholds must be met)
                     is_speech_detected = (rms > self.vad_energy_threshold and speech_prob >= self.vad_confidence_threshold)
 
                     if is_speech_detected:
@@ -161,10 +160,8 @@ class InterruptDetector:
         """Stops the VAD interrupt listener thread by setting an event."""
         if self.interrupt_listener_thread and self.interrupt_listener_thread.is_alive():
              if not self.should_stop_interrupt_listener.is_set():
-                print("Stopping interrupt listener...")
                 self.should_stop_interrupt_listener.set()
              else:
-                 # Already stopping
                  pass
         self.interrupt_listener_thread = None
         self._interrupt_event_ref = None

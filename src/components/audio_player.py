@@ -19,15 +19,12 @@ class AudioPlayer:
         if sample_rate is None:
             sample_rate = self.default_sample_rate
 
-        # Convert PyTorch tensor to numpy array if needed
         if hasattr(audio_data, 'detach') and hasattr(audio_data, 'cpu') and hasattr(audio_data, 'numpy'):
             audio_data = audio_data.detach().cpu().numpy()
 
-        # Ensure audio data is float32 and normalized
         if audio_data.dtype != np.float32:
             audio_data = audio_data.astype(np.float32)
 
-        # Normalize if needed
         if np.max(np.abs(audio_data)) > 1.0:
             audio_data = audio_data / np.max(np.abs(audio_data))
 
@@ -81,9 +78,7 @@ class AudioPlayer:
                         )
                         current_sample_rate = sample_rate
 
-                    # Calculate approximate playback time for this chunk
                     playback_duration = len(audio_data) / sample_rate
-                    playback_start = time.time()
 
                     # Play audio
                     try:
@@ -97,12 +92,9 @@ class AudioPlayer:
 
 
                 except queue.Empty:
-                    # No audio in queue, set playing flag to false if queue is empty
                     if self.audio_queue.empty():
                         self.is_playing = False
-                        # Reset duration tracking when queue is emptied
-                        if self.total_audio_duration > 0.1: # Only reset if there's significant remaining duration
-                            print(f"Queue emptied with {self.total_audio_duration:.2f}s of tracked audio remaining, resetting")
+                        if self.total_audio_duration > 0.1:
                             self.total_audio_duration = 0.0
                     continue
                 except Exception as e:
@@ -121,7 +113,7 @@ class AudioPlayer:
                 except Exception as e:
                     print(f"Error closing audio stream: {e}")
             self.is_playing = False
-            self.total_audio_duration = 0.0 # Reset duration tracking
+            self.total_audio_duration = 0.0
 
     def wait_for_playback_complete(self, timeout=None):
         """Wait until all audio playback has completed.
@@ -133,7 +125,7 @@ class AudioPlayer:
             bool: True if playback completed, False if timed out
         """
         if not self.is_playing and self.audio_queue.empty():
-            self.total_audio_duration = 0.0 # Ensure reset if already finished
+            self.total_audio_duration = 0.0
             return True
 
         # Calculate dynamic timeout if not provided
@@ -147,21 +139,19 @@ class AudioPlayer:
 
         start_time = time.time()
 
-        # Wait for the queue to be empty
         queue_empty_time = None
         while not self.audio_queue.empty() and (time.time() - start_time) < timeout:
             time.sleep(0.1)
         if self.audio_queue.empty():
              queue_empty_time = time.time()
 
-        # Then wait for the is_playing flag to go to False
         while self.is_playing and (time.time() - start_time) < timeout:
             time.sleep(0.1)
 
         # Add a small buffer wait after is_playing is false, ensures the last chunk finishes
         if not self.is_playing:
              buffer_wait_start = time.time()
-             buffer_wait_duration = min(1.0, estimated_remaining * 0.1 + 0.2) # Dynamic buffer
+             buffer_wait_duration = min(1.0, estimated_remaining * 0.1 + 0.2)
              while (time.time() - buffer_wait_start) < buffer_wait_duration and (time.time() - start_time) < timeout:
                   time.sleep(0.05)
              print(f"Buffer wait complete ({buffer_wait_duration:.2f}s). Queue empty at: {queue_empty_time - start_time if queue_empty_time else 'N/A':.2f}s, Playing flag false at: {time.time() - buffer_wait_start - start_time:.2f}s")
@@ -172,9 +162,8 @@ class AudioPlayer:
             self.stop_playback(force=True) # Force stop on timeout
             return False
 
-        self.is_playing = False # Ensure flag is reset
-        self.total_audio_duration = 0.0 # Reset tracking variables after successful playback
-        print("Audio playback complete.")
+        self.is_playing = False
+        self.total_audio_duration = 0.0
         return True
 
     def stop_playback(self, force=False):
@@ -202,7 +191,6 @@ class AudioPlayer:
 
             self.is_playing = False
             self.total_audio_duration = 0.0
-            print("Audio playback stopped.")
 
     def cleanup(self):
         """Clean up resources, stop thread."""

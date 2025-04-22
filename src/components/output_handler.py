@@ -33,7 +33,6 @@ class OutputHandler:
              # Return buffer unmodified, assume not spoken, not interrupted
              return tts_buffer, initial_words_spoken, False 
 
-        # Determine if we should speak this chunk
         if not initial_words_spoken:
             word_count = tts_buffer.count(' ') + 1 
             if word_count >= approx_words_for_initial_chunk or any(tts_buffer.endswith(punc) for punc in sentence_ends):
@@ -42,29 +41,22 @@ class OutputHandler:
             if any(tts_buffer.endswith(punc) for punc in sentence_ends):
                  speak_this_chunk = True
                  
-        # Synthesize and Play if needed
         if speak_this_chunk and tts_buffer.strip():
             chunk_to_speak = tts_buffer.strip()
             remaining_buffer = "" # Reset buffer after speaking
             initial_words_spoken = True # Mark initial chunk spoken
             try:
                 audio_array, sample_rate = tts_handler.synthesize(chunk_to_speak)
-                # Check interrupt *before* playing
                 if interrupt_event.is_set(): 
                      interrupted = True
-                     print("[TTS Buffer] Interrupt detected before playing chunk.")
-                # Only play if not interrupted and audio is valid
                 if not interrupted and audio_array is not None and len(audio_array) > 0:
                     audio_handler.player.play_audio(audio_array, sample_rate)
                     # Check interrupt *during* playback (important for short chunks)
                     if interrupt_event.is_set(): interrupted = True; audio_handler.player.stop_playback()
-                elif not interrupted:
-                    print(f"[Debug TTS Buffer] Skipping play_audio for chunk due to invalid audio_array or interruption.") 
             except Exception as e:
                  print(f"\nError during TTS synthesis/playback for chunk: {e}") 
-                 interrupted = True # Treat TTS error as an interruption to stop stream
+                 interrupted = True
         else:
-            # If not speaking, keep the buffer as is
             remaining_buffer = tts_buffer
 
         return remaining_buffer, initial_words_spoken, interrupted
@@ -108,15 +100,12 @@ class OutputHandler:
             # Check if interruptions are enabled before starting listener
             if self.component_manager.interruptions_enabled:
                 if hasattr(audio_handler, 'start_interrupt_listener'):
-                    print("[OutputHandler] Interruptions enabled, starting listener...")
                     audio_handler.start_interrupt_listener(interrupt_event)
                 else:
                     print("Warning: Interruptions enabled but AudioHandler has no start_interrupt_listener.")
                     # Fallback: create an event that never gets set
                     interrupt_event = threading.Event() 
             else:
-                print("[OutputHandler] Interruptions disabled, listener not started.")
-                # Ensure the event is never set if listener is disabled
                 interrupt_event = threading.Event()
 
             # --- Handle Async Generator --- 
@@ -166,7 +155,6 @@ class OutputHandler:
 
             # --- Final Buffer Handling (Common Logic) --- 
             if not interrupted and tts_buffer.strip():
-                 print(f"\n[OutputHandler] Processing final buffer: '{tts_buffer[:50]}...'")
                  try:
                      _, _, chunk_interrupted = self._process_tts_buffer(tts_buffer.strip(), initial_words_spoken, interrupt_event)
                      if chunk_interrupted: interrupted = True
@@ -195,7 +183,6 @@ class OutputHandler:
                 if hasattr(audio_handler, 'stop_playback'): audio_handler.stop_playback()
                 return ("INTERRUPTED", full_response_text)
             elif playback_completed_normally:
-                 print("\n[OutputHandler] Playback completed.")
                  return ("COMPLETED", full_response_text)
             else:
                  print("\n[OutputHandler] Playback did not complete normally (error/timeout).")
@@ -212,7 +199,6 @@ class OutputHandler:
             if hasattr(audio_handler, 'stop_interrupt_listener'):
                  try:
                       audio_handler.stop_interrupt_listener()
-                      print("[OutputHandler] Interrupt listener stopped.")
                  except Exception as e_stop:
                       print(f"Error stopping interrupt listener: {e_stop}")
             else:

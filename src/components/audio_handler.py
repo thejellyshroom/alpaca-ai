@@ -20,17 +20,13 @@ class AudioHandler:
         self.config = config or {}
         self.audio_validation = self.config.get('audio_validation', {})
         self.recognizer_config = self.config.get('recognizer', {})
-
-        # --- PyAudio Instance (Centralized) ---
         self.pyaudio_instance = pyaudio.PyAudio()
 
-        # --- Player Component ---
         player_config = {
             'default_sample_rate': self.config.get('tts_sample_rate', 22050) # Example config key
         }
         self.player = AudioPlayer(self.pyaudio_instance, default_sample_rate=player_config['default_sample_rate'])
 
-        # --- Interrupt Detector Component ---
         detector_config = {
             'sample_rate': self.config.get('sample_rate', 44100),
             'channels': self.config.get('channels', 1),
@@ -40,7 +36,6 @@ class AudioHandler:
         }
         self.detector = InterruptDetector(self.pyaudio_instance, detector_config)
 
-        # --- Speech Recognition Component (Remains in AudioHandler) ---
         self.recognizer = sr.Recognizer()
         self.recognizer.pause_threshold = self.recognizer_config.get('pause_threshold', 1.5)
         self.recognizer.phrase_threshold = self.recognizer_config.get('phrase_threshold', 0.3)
@@ -93,7 +88,6 @@ class AudioHandler:
                             phrase_time_limit=self.max_phrase_duration
                         )
 
-                        # Use adjusted energy threshold for the check
                         current_energy_threshold = self.recognizer.energy_threshold
                         print(f"Listening finished. Energy Threshold during listen: {current_energy_threshold:.2f}")
 
@@ -149,8 +143,6 @@ class AudioHandler:
             self.recognizer.non_speaking_duration = original_non_speaking_duration
             print("Listening session ended.")
 
-    # --- Delegated Methods ---
-
     def play_audio(self, audio_data, sample_rate=None):
         """Delegate audio playback to the AudioPlayer."""
         self.player.play_audio(audio_data, sample_rate)
@@ -176,19 +168,15 @@ class AudioHandler:
     # --- Cleanup Method ---
     def __del__(self):
         """Cleanup resources for player, detector, and PyAudio."""
-        print("Cleaning up AudioHandler...")
         try:
             if hasattr(self, 'player') and self.player:
                 self.player.cleanup()
             if hasattr(self, 'detector') and self.detector:
                 self.detector.cleanup()
 
-            # Terminate PyAudio only after components are cleaned up
             if hasattr(self, 'pyaudio_instance') and self.pyaudio_instance:
-                # Add a small delay before terminating PyAudio to ensure streams are closed
                 time.sleep(0.2)
                 self.pyaudio_instance.terminate()
-                print("PyAudio terminated.")
 
         except Exception as e:
             print(f"Error during AudioHandler cleanup: {e}")

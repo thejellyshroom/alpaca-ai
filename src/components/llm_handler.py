@@ -17,9 +17,7 @@ class LLMHandler:
     def __init__(self, config=None):
         """Initialize LLM Handler, including RAG querier if enabled."""
         config = config or {}
-        self.model_name = config.get('model', 'gemma3:4b') # Get base model from main config
-        
-        # Text generation parameters from main config
+        self.model_name = config.get('model', 'gemma3:4b')
         local_config = config.get('local', {})
         self.params = {
             'temperature': local_config.get('temperature'),
@@ -29,24 +27,16 @@ class LLMHandler:
             'n_ctx': local_config.get('n_ctx'),
             'repeat_penalty': local_config.get('repeat_penalty')
         }
-        print(f"LLM Handler initialized for base model: {self.model_name}")
-
-        # --- RAG Initialization ---
         self.rag_querier = None
         enable_rag_str = os.getenv('ENABLE_RAG', 'false')
         cleaned_enable_rag_str = enable_rag_str.split('#')[0].strip().strip('"').strip("'").lower()
         self.rag_enabled = cleaned_enable_rag_str == 'true'
-
         if self.rag_enabled:
-            print("RAG is enabled. Attempting to initialize MiniRAG querier...")
-            # Load RAG-specific config from environment
             self.working_dir = os.getenv('WORKING_DIR')
             raw_query_llm_model = os.getenv('QUERY_LLM_MODEL')
             self.embedding_model = os.getenv('EMBEDDING_MODEL')
             llm_max_token = int(os.getenv('LLM_MAX_TOKEN_SIZE', '200'))
             llm_max_async = int(os.getenv('LLM_MAX_ASYNC', '1'))
-            
-            # Clean the query model name
             self.query_llm_model = None
             if raw_query_llm_model:
                  self.query_llm_model = raw_query_llm_model.split('#')[0].strip().strip('"').strip("'")
@@ -56,19 +46,17 @@ class LLMHandler:
                                  'QUERY_LLM_MODEL': self.query_llm_model, 
                                  'EMBEDDING_MODEL': self.embedding_model}
             missing_vars = [name for name, value in required_rag_vars.items() if not value]
-            
             if missing_vars:
                 print(f"Warning: Cannot initialize RAG. Missing env vars: {missing_vars}. RAG disabled.")
                 self.rag_enabled = False
             else:
                 rag_embedding_func = setup_embedding_func(self.embedding_model)
-                
                 if rag_embedding_func:
                     try:
                         self.rag_querier = MiniRAG(
                             working_dir=self.working_dir,
-                            llm_model_func=ollama_model_complete, # Use Ollama for querying
-                            llm_model_max_token_size=llm_max_token, # Use RAG settings
+                            llm_model_func=ollama_model_complete,
+                            llm_model_max_token_size=llm_max_token,
                             llm_model_max_async=llm_max_async,
                             llm_model_kwargs={"ollama_model": self.query_llm_model},
                             embedding_func=rag_embedding_func,
@@ -91,8 +79,6 @@ class LLMHandler:
         """Get a streaming response from the base LLM, injecting personality."""
         print(f"Using Base LLM '{self.model_name}' with params: {self.params}")
         
-        # --- Inject Personality into System Prompt --- 
-        # Find or create system message
         system_message_found = False
         for msg in messages:
             if msg['role'] == 'system':
@@ -136,7 +122,6 @@ class LLMHandler:
             
         print(f"Using RAG Querier (LLM: {self.query_llm_model}) with mode '{rag_param.mode}'")
         try:
-            # Use await with aquery directly 
             answer_source = await self.rag_querier.aquery(
                 query, 
                 param=rag_param
