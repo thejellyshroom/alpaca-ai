@@ -105,12 +105,19 @@ class OutputHandler:
         
         try:
             print("Assistant:", end="", flush=True)
-            if hasattr(audio_handler, 'start_interrupt_listener'):
-                 audio_handler.start_interrupt_listener(interrupt_event)
+            # Check if interruptions are enabled before starting listener
+            if self.component_manager.interruptions_enabled:
+                if hasattr(audio_handler, 'start_interrupt_listener'):
+                    print("[OutputHandler] Interruptions enabled, starting listener...")
+                    audio_handler.start_interrupt_listener(interrupt_event)
+                else:
+                    print("Warning: Interruptions enabled but AudioHandler has no start_interrupt_listener.")
+                    # Fallback: create an event that never gets set
+                    interrupt_event = threading.Event() 
             else:
-                 print("Warning: AudioHandler does not have start_interrupt_listener. Barge-in disabled.")
-                 # Fallback: create an event that never gets set if listener missing
-                 interrupt_event = threading.Event() 
+                print("[OutputHandler] Interruptions disabled, listener not started.")
+                # Ensure the event is never set if listener is disabled
+                interrupt_event = threading.Event()
 
             # --- Handle Async Generator --- 
             if isinstance(response_source, types.AsyncGeneratorType):

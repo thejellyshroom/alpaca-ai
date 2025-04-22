@@ -1,52 +1,63 @@
 import sys
 import os
 import asyncio
-import signal # Import signal module
+import signal
 import traceback
+import argparse
+import sys
 from dotenv import load_dotenv
+
+from src.core.alpaca import Alpaca
+from src.utils.config_loader import ConfigLoader
+from src.core.voice_loop import run_voice_interaction_loop
+from src.core.text_loop import run_text_interaction_loop
+from src.rag.indexer import run_indexing
+from utils.summarizer import summarize_conversation, save_summary
 
 project_root = os.path.dirname(os.path.abspath(__file__))
 rag_path = os.path.join(project_root, 'src', 'rag')
 if rag_path not in sys.path:
     sys.path.insert(0, rag_path)
-
-from src.core.alpaca import Alpaca
-from src.utils.config_loader import ConfigLoader
-import sys
-import time # Needed for sleep in error recovery
-import traceback
-from dotenv import load_dotenv
-from src.rag.indexer import run_indexing
-from src.utils.session_utils import summarize_conversation, save_summary
-
-
-# Change main to async def
+    
 async def main():
-    # Load environment variables from .env file first
     load_dotenv()
+
+    # --- Argument Parsing ---
+    parser = argparse.ArgumentParser(description="Alpaca AI Voice/Text Assistant")
+    default_mode = os.getenv('DEFAULT_MODE', 'voice').lower()
+    parser.add_argument(
+        '--mode',
+        type=str,
+        choices=['voice', 'text'],
+        default=default_mode,
+        help="Run in 'voice' mode (voice input/output) or 'text' mode (text input/output). Default from DEFAULT_MODE env var."
+    )
+    args = parser.parse_args()
+    run_mode = args.mode
+    print(f"Running in {run_mode.upper()} mode.")
+    # --- End Argument Parsing ---
+
     print("Initializing AI Voice assistant...")
-    assistant = None # Initialize assistant to None for finally block
-    current_task = None # Variable to hold the current interaction task
-    shutdown_requested = False # Flag for graceful shutdown
+    assistant = None
+    main_task = None
+    shutdown_requested = False
     
-    data_path_value = os.getenv("DATA_PATH", "./data/dataset") # Get path, provide default
-    print(f"Using DATA_PATH: {data_path_value}")
+    data_path_value = os.getenv("DATA_PATH", "./data/dataset")
     
-    def handle_shutdown_signal(*args):
-        nonlocal shutdown_requested, current_task
+    def handle_shutdown_signal(task_to_cancel: asyncio.Task):
+        nonlocal shutdown_requested
         if not shutdown_requested:
-             print("\nShutdown signal received. Initiating graceful shutdown...")
+             print("\nShutdown signal received...")
              shutdown_requested = True
-             # Cancel the currently running interaction task, if any
-             if current_task and not current_task.done():
-                 current_task.cancel()
+             if task_to_cancel and not task_to_cancel.done():
+                 task_to_cancel.cancel()
         else:
             print("Shutdown already in progress.")
 
-    # --- RAG Indexing (Now awaited) --- 
+    # --- RAG Indexing --- 
     try:
         print("--- Running RAG Indexing --- ")
-        await run_indexing() # Use await
+        await run_indexing()
         print("--- RAG Indexing Complete --- \n")
     except Exception as e:
         print(f"***** CRITICAL ERROR DURING RAG INDEXING *****: {e}")
@@ -61,53 +72,38 @@ async def main():
          sys.exit(1)
 
     try:
-         assistant = Alpaca(**assistant_params)
-         
-         duration = assistant.duration_arg
-         timeout = assistant.timeout_arg
-         phrase_limit = assistant.phrase_limit_arg
+        assistant = Alpaca(**assistant_params, mode=run_mode)
+        
+        duration = assistant.duration_arg
+        timeout = assistant.timeout_arg
+        phrase_limit = assistant.phrase_limit_arg
 
-         # --- Register Signal Handler --- 
-         loop = asyncio.get_running_loop()
-         loop.add_signal_handler(signal.SIGINT, handle_shutdown_signal)
+        # --- Register Signal Handler --- 
+        loop = asyncio.get_running_loop()
 
-         # --- Main Interaction Loop --- 
-         while not shutdown_requested:
-              if current_task and not current_task.done():
-                   await asyncio.sleep(0.5) # Wait briefly before starting new task
-                   continue
-                   
-              try:
-                  current_task = asyncio.create_task(
-                       assistant.interaction_handler.run_single_interaction(
-                           duration=duration,
-                           timeout=timeout,
-                           phrase_limit=phrase_limit
-                       )
-                  )
-                  user_input_status, assistant_output = await current_task
-                  
-                  if user_input_status == "ERROR":
-                       print(f"Recovering from interaction error: {assistant_output}")
-                       await asyncio.sleep(2) 
-                  current_task = None 
+        # --- Create and Run Main Loop Task --- 
+        if run_mode == 'voice':
+            main_task = asyncio.create_task(
+                run_voice_interaction_loop(assistant, duration, timeout, phrase_limit),
+                name="VoiceInteractionLoop"
+            )
+        elif run_mode == 'text':
+            main_task = asyncio.create_task(
+                run_text_interaction_loop(assistant),
+                name="TextInteractionLoop"
+            )
+        else:
+            print(f"Error: Invalid run mode '{run_mode}'")
+            sys.exit(1)
 
-              except asyncio.CancelledError:
-                   print("Interaction task cancelled due to shutdown request.")
-                   shutdown_requested = True
-                   break 
-              
-              except Exception as loop_e:
-                   print(f"\nError during interaction loop iteration: {loop_e}")
-                   traceback.print_exc()
-                   current_task = None # Clear task on other exceptions too
-                   await asyncio.sleep(2) 
-         # --- End Main Interaction Loop --- 
+        # Now that main_task exists, add the signal handler
+        loop.add_signal_handler(signal.SIGINT, handle_shutdown_signal, main_task)
 
-         print("Main loop exited gracefully.") # Add confirmation
+        await main_task
+         # --- End Main Loop Task --- 
+        print("Main loop exited.")
 
     except Exception as e:
-         # Catch errors during setup
          print(f"\nAn unexpected fatal error occurred during setup or loop: {e}")
          traceback.print_exc()
     
@@ -115,8 +111,12 @@ async def main():
         try:
             loop = asyncio.get_running_loop()
             if loop and not loop.is_closed():
-                loop.remove_signal_handler(signal.SIGINT)
-                print("Signal handler removed.")
+                try:
+                    loop.remove_signal_handler(signal.SIGINT)
+                except RuntimeError:
+                     print("No running event loop to remove signal handler from.")
+                except Exception as e_remove:
+                    print(f"Error removing signal handler: {e_remove}")
         except RuntimeError:
              print("No running event loop to remove signal handler from.")
         except Exception as e_remove:
@@ -124,7 +124,7 @@ async def main():
         
         # --- Summarization on Graceful Shutdown --- 
         if shutdown_requested and assistant: 
-            print("\n--- Running Session Summarization (Graceful Shutdown) --- ")
+            print("\n--- Running Session Summarization --- ")
             if hasattr(assistant, 'conversation_manager') and \
                hasattr(assistant, 'component_manager') and \
                hasattr(assistant.component_manager, 'llm_handler'):
@@ -137,13 +137,9 @@ async def main():
                     print("[Summarizer] No conversation history to summarize.")
                 else:
                     try:
-                        # Await the async summarization directly
-                        print("[Summarizer] Generating summary...")
                         summary = await summarize_conversation(history, llm_handler_inst)
-                        if summary and summary != "[Error generating summary]":
+                        if summary:
                             save_summary(summary, len(history), base_data_path=data_path_value) 
-                        else:
-                            print("[Summarizer] Failed to generate summary.")
                     except Exception as summary_e:
                         print(f"[Summarizer] Error during summarization/saving: {summary_e}")
                         traceback.print_exc()
@@ -152,23 +148,19 @@ async def main():
             print("--- Session Summarization Finished --- ")
         # --------------------------------------------
 
-        # --- Component Cleanup --- 
         print("Performing final cleanup...") 
         if assistant and hasattr(assistant, 'component_manager'):
-              try:
-                  assistant.component_manager.cleanup()
-              except Exception as cleanup_e:
-                   # Catch potential errors during cleanup (like the double free)
-                   print(f"Error during component cleanup: {cleanup_e}")
-                   traceback.print_exc()
+            try:
+                assistant.component_manager.cleanup()
+            except Exception as cleanup_e:
+                print(f"Error during component cleanup: {cleanup_e}")
+                traceback.print_exc()
         print("AI Voice assistant shut down process complete.")
 
 if __name__ == "__main__":
-    # Keep the asyncio.run call
     try:
         asyncio.run(main())
     except Exception as e:
-        # Catch errors that might prevent asyncio.run from completing
         print(f"\nUnhandled exception during asyncio execution: {e}")
         traceback.print_exc()
     finally:

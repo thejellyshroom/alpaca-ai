@@ -28,13 +28,27 @@ def _format_history_for_prompt(history: list[dict]) -> str:
     """Formats conversation history into a readable string."""
     return "\n".join([f"{msg['role'].capitalize()}: {msg['content']}" for msg in history])
 
+# Define a synchronous helper function for generator consumption
+def _get_full_summary_sync(llm_handler: LLMHandler, messages: list[dict]) -> str:
+    """Synchronously calls LLM and consumes the generator."""
+    try:
+        summary_generator = llm_handler.get_response(messages=messages)
+        # Consume the SYNCHRONOUS generator fully
+        chunks = []
+        for chunk in summary_generator:
+            chunks.append(chunk)
+        full_summary = "".join(chunks)
+        return full_summary.strip()
+    except Exception as e:
+        print(f"[Summarizer Sync Helper] Error during LLM call: {e}")
+        raise # Re-raise the exception to be caught by the executor call
+
 async def summarize_conversation(history: list[dict], llm_handler: LLMHandler) -> str:
-    """Generates a summary of the conversation history using the LLM."""
+    """Generates a summary of the conversation history using the LLM asynchronously."""
     if not history:
         print("[Summarizer] History is empty, skipping summarization.")
         return ""
 
-    # Filter out system messages before summarizing user/assistant interaction
     user_assistant_history = [msg for msg in history if msg['role'] in ('user', 'assistant')]
     if not user_assistant_history:
         print("[Summarizer] No user/assistant messages found in history, skipping summarization.")
@@ -44,27 +58,23 @@ async def summarize_conversation(history: list[dict], llm_handler: LLMHandler) -
     history_string = _format_history_for_prompt(user_assistant_history)
     prompt = SUMMARY_PROMPT_TEMPLATE.format(history_string=history_string)
 
-    # Prepare messages for the specific summarization call
     summarization_messages = [
         SUMMARIZER_SYSTEM_PROMPT,
         {"role": "user", "content": prompt}
     ]
 
-    print("[Summarizer] Requesting summary from LLM...")
+    print("[Summarizer] Requesting summary from LLM via executor...")
     try:
-        # Use the LLM Handler's get_response, which returns a sync generator
-        summary_generator = llm_handler.get_response(messages=summarization_messages)
-        
-        # Consume the SYNCHRONOUS generator fully using a standard for loop
-        chunks = []
-        for chunk in summary_generator:
-             chunks.append(chunk)
-        full_summary = "".join(chunks)
-             
-        print("[Summarizer] Summary received.")
-        return full_summary.strip()
+        loop = asyncio.get_running_loop()
+
+        full_summary = await loop.run_in_executor(
+            None, _get_full_summary_sync, llm_handler, summarization_messages
+        )
+
+        print("[Summarizer] Summary received from executor.")
+        return full_summary # Already stripped in the helper function
     except Exception as e:
-        print(f"[Summarizer] Error during LLM call for summarization: {e}")
+        print(f"[Summarizer] Error during LLM call via executor for summarization: {e}")
         traceback.print_exc() # Log traceback for debugging
         return "[Error generating summary]" # Return error indicator
 
@@ -89,10 +99,8 @@ def save_summary(summary: str, history_length: int, base_data_path: str):
         metadata = f"Timestamp: {datetime.now().isoformat()}\nTurns: {history_length}\n---\n"
         content_to_write = metadata + summary
 
-        print(f"[Summarizer] Saving summary to {filename}...")
         with open(filename, "w", encoding="utf-8") as f:
             f.write(content_to_write)
-        print("[Summarizer] Summary saved successfully.")
 
     except IOError as e:
         print(f"[Summarizer] Error saving summary file {filename}: {e}")

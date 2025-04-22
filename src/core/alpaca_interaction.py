@@ -134,3 +134,31 @@ class AlpacaInteraction:
             traceback.print_exc()
             if audio_handler: audio_handler.stop_playback()
             return "ERROR", str(e) 
+
+    async def run_single_text_interaction(self, user_text: str) -> str:
+        """Processes text input and returns an async generator for the response stream."""
+        try:
+            if not user_text:
+                print("Warning: Received empty text input.")
+                # Return an empty async generator
+                async def empty_gen():
+                    if False: yield
+                return empty_gen()
+
+            # Add user message to history
+            self.conversation_manager.add_user_message(user_text)
+            
+            # Get response generator (RAG or base LLM)
+            response_source = await self._process_and_respond() 
+
+            # Return the generator directly
+            return response_source
+
+        except Exception as e:
+            print(f"\nCritical error in text interaction handler: {e}")
+            traceback.print_exc()
+            # Return an error message to be displayed to the user
+            # Return an async generator yielding the error message
+            async def error_gen():
+                yield f"[Critical Error: {e}]"
+            return error_gen() 

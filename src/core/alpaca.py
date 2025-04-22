@@ -12,7 +12,8 @@ class Alpaca:
                  llm_config=None,
                  duration=None, 
                  timeout=5, 
-                 phrase_limit=10):
+                 phrase_limit=10,
+                 mode='voice'):
         
         # Configs are passed directly to ComponentManager
         asr_config = asr_config or {}
@@ -21,7 +22,7 @@ class Alpaca:
         
         system_prompt = llm_config.get('system_prompt', "You are a helpful assistant.")
         self.conversation_manager = ConversationManager(system_prompt=system_prompt)
-        self.component_manager = ComponentManager(asr_config, tts_config, llm_config)
+        self.component_manager = ComponentManager(asr_config, tts_config, llm_config, mode=mode)
         self.interaction_handler = AlpacaInteraction(self.component_manager, self.conversation_manager)
 
         self.duration_arg = duration

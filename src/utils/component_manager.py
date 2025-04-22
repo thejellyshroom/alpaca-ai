@@ -7,33 +7,53 @@ from ..components.llm_handler import LLMHandler
 from ..components.tts_handler import TTSHandler
 import traceback
 import gc
+import os
 
 class ComponentManager:
-    def __init__(self, asr_config=None, tts_config=None, llm_config=None):
-        """Initialize and hold the handler components."""
+    def __init__(self, asr_config=None, tts_config=None, llm_config=None, mode='voice'):
+        """Initialize and hold the handler components, considering the run mode."""
         self.asr_config = asr_config or {}
         self.tts_config = tts_config or {}
         self.llm_config = llm_config or {}
+        self.mode = mode # Store the mode
+
+        enable_interruptions_str = os.getenv('ENABLE_INTERRUPTIONS', 'true')
+        self.interruptions_enabled = enable_interruptions_str.lower() == 'true'
+        print(f"Interruptions Enabled: {self.interruptions_enabled}")
 
         # Handler instances
         self.audio_handler = None
         self.transcriber = None
         self.llm_handler = None
         self.tts_handler = None
-        self.tts_enabled = False
+        self.tts_enabled = False # Default to False
 
         self.load_all_components() # Load components on initialization
 
     def load_all_components(self):
-        """Load all handler components sequentially."""
-        print("\n--- Loading All Components --- ")
-        self.load_audio_handler()
-        self.load_stt()
+        """Load components based on the run mode."""
+        print(f"\n--- Loading Components (Mode: {self.mode.upper()}) --- ")
+        
+        # Always load LLM Handler
         self.load_llm_handler()
-        self.load_tts_handler()
-        print("--- All Components Loaded ---\n")
+
+        # Conditionally load audio-related components
+        if self.mode == 'voice':
+            print("Loading audio components for VOICE mode...")
+            self.load_audio_handler()
+            self.load_stt()
+            self.load_tts_handler() # This sets self.tts_enabled if successful
+        else:
+            print("Skipping audio components for TEXT mode.")
+            self.tts_enabled = False # Explicitly ensure TTS is disabled in text mode
+            # Ensure audio components are None if mode is text (in case of mode switch? belt-and-suspenders)
+            self.audio_handler = None
+            self.transcriber = None
+            self.tts_handler = None
+
+        print("--- Component Loading Finished ---\n")
         # Print summary after loading
-        self._print_component_summary()
+        self._print_component_summary() # Summary will reflect loaded components
         
     def unload_component(self, component_obj, component_name):
         if component_obj:
@@ -95,52 +115,62 @@ class ComponentManager:
     def _print_component_summary(self):
         """Prints a summary of loaded components and their main settings."""
         print("--- Component Summary ---")
-        # STT / Transcriber
-        stt_model = self.asr_config.get('model', 'N/A')
-        print(f"Transcription model: {stt_model}")
-        device_info = "Unknown Device"
-        if self.transcriber:
-             if hasattr(self.transcriber, 'device'):
-                 device_info = self.transcriber.device
-             elif hasattr(self.transcriber, 'model') and hasattr(self.transcriber.model, 'device'): 
-                  device_info = f"{self.transcriber.model.device} (compute_type: {self.transcriber.model.compute_type})"
-             elif hasattr(self.transcriber, 'pipe') and hasattr(self.transcriber.pipe, 'device'):
-                  device_info = str(self.transcriber.pipe.device)
-        print(f"STT Device: {device_info}")
-        
-        # TTS
-        tts_model = self.tts_config.get('model', 'N/A')
-        kokoro_conf = self.tts_config.get('kokoro', {})
-        tts_voice = kokoro_conf.get('voice', 'N/A')
-        tts_speed = kokoro_conf.get('speed', 'N/A')
-        print(f"TTS Model: {tts_model} (Enabled: {self.tts_enabled})")
-        if self.tts_enabled:
-            print(f"TTS Voice: {tts_voice}")
-            print(f"TTS Speed: {tts_speed}x")
-            
-        # LLM
+        # LLM (Always loaded, print first)
         llm_model = getattr(self.llm_handler, 'model_name', 'N/A')
         print(f"LLM Model: {llm_model}")
+
+        # STT / Transcriber (Voice mode only)
+        if self.mode == 'voice' and self.transcriber:
+            stt_model = self.asr_config.get('model', 'N/A')
+            print(f"Transcription model: {stt_model}")
+            device_info = "Unknown Device"
+            if hasattr(self.transcriber, 'device'):
+                device_info = self.transcriber.device
+            elif hasattr(self.transcriber, 'model') and hasattr(self.transcriber.model, 'device'): 
+                device_info = f"{self.transcriber.model.device} (compute_type: {self.transcriber.model.compute_type})"
+            elif hasattr(self.transcriber, 'pipe') and hasattr(self.transcriber.pipe, 'device'):
+                device_info = str(self.transcriber.pipe.device)
+            print(f"STT Device: {device_info}")
+        elif self.mode == 'voice':
+            print("Transcription model: Not Loaded")
+            
+        # TTS (Voice mode only)
+        if self.mode == 'voice':
+            tts_model = self.tts_config.get('model', 'N/A')
+            kokoro_conf = self.tts_config.get('kokoro', {})
+            tts_voice = kokoro_conf.get('voice', 'N/A')
+            tts_speed = kokoro_conf.get('speed', 'N/A')
+            print(f"TTS Model: {tts_model} (Enabled: {self.tts_enabled})")
+            if self.tts_enabled:
+                print(f"TTS Voice: {tts_voice}")
+                print(f"TTS Speed: {tts_speed}x")
+            else:
+                print("TTS: Not Loaded or Disabled")
+            
+        # LLM (Already printed above)
+        # llm_model = getattr(self.llm_handler, 'model_name', 'N/A')
+        # print(f"LLM Model: {llm_model}")
         
         print("-------------------------")
 
     def cleanup(self):
-        """Clean up all managed components by deleting them."""
+        """Clean up all managed components by deleting them, checking if they exist."""
         print("Cleaning up components in ComponentManager...")
-        if hasattr(self, 'tts_handler') and self.tts_handler:
+        # Only cleanup components that might have been loaded
+        if hasattr(self, 'tts_handler') and self.tts_handler: # Check existence before del
             print("Deleting TTS handler...")
             del self.tts_handler
             self.tts_handler = None
             self.tts_enabled = False
-        if hasattr(self, 'llm_handler') and self.llm_handler:
+        if hasattr(self, 'llm_handler') and self.llm_handler: # Check existence before del
              print("Deleting LLM handler...")
              del self.llm_handler
              self.llm_handler = None
-        if hasattr(self, 'transcriber') and self.transcriber:
+        if hasattr(self, 'transcriber') and self.transcriber: # Check existence before del
              print("Deleting Transcriber (STT handler)...")
              del self.transcriber
              self.transcriber = None
-        if hasattr(self, 'audio_handler') and self.audio_handler:
+        if hasattr(self, 'audio_handler') and self.audio_handler: # Check existence before del
             print("Deleting Audio handler...")
             # Audio handler's __del__ should call player/detector cleanup
             del self.audio_handler
