@@ -4,7 +4,7 @@ import time
 import traceback
 import types
 import threading
-import asyncio # Add asyncio import
+# import asyncio # Remove asyncio import
 import soundfile as sf 
 import sys # Ensure sys is imported if used elsewhere
 
@@ -75,27 +75,30 @@ class AlpacaInteraction:
             traceback.print_exc()
             return "ERROR"
 
-    async def _process_and_respond(self):
-        """Processes the current conversation and decides whether to use RAG asynchronously."""
+    def _process_and_respond(self):
+        """Processes the current conversation and decides whether to use RAG synchronously."""
         llm_handler = self.component_manager.llm_handler
         if not llm_handler:
              print("Error: LLM Handler not available.")
-             async def error_gen(): 
-                 yield "Error: LLM Handler not available."
-             return error_gen()
+             # Return a regular generator or simple error string/value for sync version
+             # def error_gen(): yield "Error: LLM Handler not available."; return 
+             # return error_gen()
+             # Simplification: return an error indicator or raise exception
+             return "ERROR: LLM Handler not available." # Or raise an exception
         
         conversation_history = self.conversation_manager.get_history()
         last_user_message = conversation_history[-1]['content'] if conversation_history and conversation_history[-1]['role'] == 'user' else ""
 
         if llm_handler.rag_querier: # Check for the initialized MiniRAG querier instance
             print("RAG querier available.")
-            return await llm_handler.get_rag_response(query=last_user_message, messages=conversation_history)
+            # return await llm_handler.get_rag_response(query=last_user_message, messages=conversation_history) <--- CHANGE: remove await, assume sync call
+            return llm_handler.get_rag_response(query=last_user_message, messages=conversation_history)
         else:
             print("RAG not available or disabled.")
             return llm_handler.get_response(messages=conversation_history) 
 
-    async def run_single_interaction(self, duration=None, timeout=10, phrase_limit=10):
-        """Runs a single listen -> process -> speak cycle asynchronously."""
+    def run_single_interaction(self, duration=None, timeout=10, phrase_limit=10):
+        """Runs a single listen -> process -> speak cycle synchronously."""
         audio_handler = self.component_manager.audio_handler
         try:
             if audio_handler and audio_handler.player.is_playing:
@@ -106,12 +109,12 @@ class AlpacaInteraction:
                  print("Error: Audio handler not available for interaction.")
                  return "ERROR", "Audio handler not initialized."
 
-            # Run the synchronous _listen method in a separate thread
-            # _listen handles STT and returns the transcribed text or an error string
-            print("[Interaction] Running _listen in executor...") # Log
-            transcribed_text = await asyncio.to_thread(
-                self._listen, duration=duration, timeout=timeout
-            )
+            # Run the synchronous _listen method directly
+            print("[Interaction] Running _listen...") # Log
+            # transcribed_text = await asyncio.to_thread( <--- CHANGE: Direct sync call
+            #     self._listen, duration=duration, timeout=timeout
+            # )
+            transcribed_text = self._listen(duration=duration, timeout=timeout)
             print(f"[Interaction] _listen result: '{transcribed_text[:50]}...'") # Log
             
             # Handle listen errors
@@ -127,8 +130,10 @@ class AlpacaInteraction:
             print(f"\nYou: {transcribed_text}")
             self.conversation_manager.add_user_message(transcribed_text)
             print("\nAlpaca is thinking...")
-            response_source = await self._process_and_respond() # Use await here
-            speak_status, ai_response_text = await self.output_handler.speak(response_source)
+            # response_source = await self._process_and_respond() # Use await here <--- CHANGE: remove await
+            response_source = self._process_and_respond() 
+            # speak_status, ai_response_text = await self.output_handler.speak(response_source) <--- CHANGE: remove await
+            speak_status, ai_response_text = self.output_handler.speak(response_source)
             if ai_response_text:
                  self.conversation_manager.add_assistant_message(ai_response_text)
             if speak_status in ["INTERRUPTED", "ERROR"]:
@@ -141,31 +146,32 @@ class AlpacaInteraction:
             if audio_handler: audio_handler.stop_playback()
             return "ERROR", str(e) 
 
-    async def run_single_text_interaction(self, user_text: str) -> str:
-        """Processes text input and returns an async generator for the response stream."""
+    def run_single_text_interaction(self, user_text: str):
+        """Processes text input and returns a generator/string for the response stream."""
+        # Return type hint needs update if it's no longer async generator
         try:
             if not user_text:
                 print("Warning: Received empty text input.")
-                # Return an empty async generator
-                async def empty_gen():
+                # Return an empty generator or empty string for sync version
+                def empty_gen():
                     if False: yield
-                return empty_gen()
+                return empty_gen() # Or return ""
 
             # Add user message to history
             self.conversation_manager.add_user_message(user_text)
             
             # Get response generator (RAG or base LLM)
-            response_source = await self._process_and_respond() 
+            # response_source = await self._process_and_respond() <--- CHANGE: remove await
+            response_source = self._process_and_respond() 
 
-            # Return the generator directly
+            # Return the generator/value directly
             return response_source
 
         except Exception as e:
             print(f"\nCritical error in text interaction handler: {e}")
             traceback.print_exc()
-            # Capture the error message before defining the generator
             error_message = str(e)
-            # Return an async generator yielding the error message
-            async def error_gen():
+            # Return a generator yielding the error or just the error string for sync
+            def error_gen():
                 yield f"[Critical Error: {error_message}]" # Use the captured message
-            return error_gen() 
+            return error_gen() # Or return f"[Critical Error: {error_message}]" 

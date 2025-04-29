@@ -160,7 +160,7 @@ class LLMHandler:
              traceback.print_exc()
              yield f"[Error communicating with base LLM: {e}]" # Yield error message
                 
-    async def get_rag_response(self, query: str, messages: list[Dict[str, Any]]) -> AsyncIterator[str]:
+    def get_rag_response(self, query: str, messages: list[Dict[str, Any]]) -> Generator[str, None, None]:
         """Uses MiniRAG to retrieve context based *only* on the latest query, then calls get_response to generate the final answer."""
         if not self.rag_querier:
             return self.get_response(messages=messages, rag_context=None)
@@ -170,8 +170,8 @@ class LLMHandler:
 
         retrieved_context = None
         try:
-            context_result = await self.rag_querier.aquery(
-                rag_query, # Pass only the latest query
+            context_result = self.rag_querier.query(
+                rag_query,
                 param=rag_param
             )
 

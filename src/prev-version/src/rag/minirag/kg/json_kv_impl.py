@@ -48,11 +48,9 @@ Usage:
 
 """
 
-import aiofiles
-import json
+import asyncio
 import os
-from dataclasses import dataclass, field
-import threading
+from dataclasses import dataclass
 
 from minirag.utils import (
     logger,
@@ -67,52 +65,44 @@ from minirag.base import (
 
 @dataclass
 class JsonKVStorage(BaseKVStorage):
-    _lock: threading.Lock = field(init=False, repr=False)
-
     def __post_init__(self):
         working_dir = self.global_config["working_dir"]
         self._file_name = os.path.join(working_dir, f"kv_store_{self.namespace}.json")
         self._data = load_json(self._file_name) or {}
-        self._lock = threading.Lock()
+        self._lock = asyncio.Lock()
         logger.info(f"Load KV {self.namespace} with {len(self._data)} data")
 
     async def all_keys(self) -> list[str]:
-        with self._lock:
-            return list(self._data.keys())
+        return list(self._data.keys())
 
     async def index_done_callback(self):
-        with self._lock:
-            data_to_write = self._data.copy()
-        write_json(data_to_write, self._file_name)
+        write_json(self._data, self._file_name)
 
     async def get_by_id(self, id):
-        with self._lock:
-            return self._data.get(id, None)
+        return self._data.get(id, None)
 
     async def get_by_ids(self, ids, fields=None):
-        with self._lock:
-            if fields is None:
-                return [self._data.get(id, None) for id in ids]
-            return [
-                (
-                    {k: v for k, v in self._data[id].items() if k in fields}
-                    if self._data.get(id, None)
-                    else None
-                )
-                for id in ids
-            ]
+        if fields is None:
+            return [self._data.get(id, None) for id in ids]
+        return [
+            (
+                {k: v for k, v in self._data[id].items() if k in fields}
+                if self._data.get(id, None)
+                else None
+            )
+            for id in ids
+        ]
 
     async def filter_keys(self, data: list[str]) -> set[str]:
-        with self._lock:
-            return set([s for s in data if s not in self._data])
+        return set([s for s in data if s not in self._data])
 
     async def upsert(self, data: dict[str, dict]):
-        with self._lock:
-            self._data.update(data)
+        left_data = {k: v for k, v in data.items() if k not in self._data}
+        self._data.update(left_data)
+        return left_data
 
     async def drop(self):
-        with self._lock:
-            self._data = {}
+        self._data = {}
 
     async def filter(self, filter_func):
         """Filter key-value pairs based on a filter function
@@ -124,7 +114,7 @@ class JsonKVStorage(BaseKVStorage):
             Dict: Key-value pairs that meet the condition
         """
         result = {}
-        with self._lock:
+        async with self._lock:
             for key, value in self._data.items():
                 if filter_func(value):
                     result[key] = value
@@ -136,7 +126,7 @@ class JsonKVStorage(BaseKVStorage):
         Args:
             ids: List of IDs to delete
         """
-        with self._lock:
+        async with self._lock:
             for id in ids:
                 if id in self._data:
                     del self._data[id]

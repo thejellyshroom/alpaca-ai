@@ -13,12 +13,12 @@ if rag_path not in sys.path:
     sys.path.insert(0, rag_path)
 # ---------------------------
 
-import asyncio
 import signal
 import traceback
 import argparse
 import sys
 from dotenv import load_dotenv
+import time
 
 from core.alpaca import Alpaca
 from utils.config_loader import ConfigLoader
@@ -27,7 +27,7 @@ from core.text_loop import run_text_interaction_loop
 from rag.indexer import run_indexing
 from utils.summarizer import summarize_conversation, save_summary
     
-async def main():
+def main():
     load_dotenv()
 
     # --- Argument Parsing ---
@@ -47,25 +47,13 @@ async def main():
 
     print("Initializing AI Voice assistant...")
     assistant = None
-    main_task = None
-    shutdown_requested = False
     
     data_path_value = os.getenv("DATA_PATH", "./data/dataset")
     
-    def handle_shutdown_signal(task_to_cancel: asyncio.Task):
-        nonlocal shutdown_requested
-        if not shutdown_requested:
-             print("\nShutdown signal received...")
-             shutdown_requested = True
-             if task_to_cancel and not task_to_cancel.done():
-                 task_to_cancel.cancel()
-        else:
-            print("Shutdown already in progress.")
-
     # --- RAG Indexing --- 
     try:
         print("--- Running RAG Indexing --- ")
-        await run_indexing()
+        run_indexing()
         print("--- RAG Indexing Complete --- \n")
     except Exception as e:
         print(f"***** CRITICAL ERROR DURING RAG INDEXING *****: {e}")
@@ -86,52 +74,28 @@ async def main():
         timeout = assistant.timeout_arg
         phrase_limit = assistant.phrase_limit_arg
 
-        loop = asyncio.get_running_loop()
-
-        # --- Create and Run Main Loop Task --- 
+        # --- Run Main Loop Synchronously --- 
+        print("Starting main interaction loop...")
         if run_mode == 'voice':
-            main_task = asyncio.create_task(
-                run_voice_interaction_loop(assistant, duration, timeout, phrase_limit),
-                name="VoiceInteractionLoop"
-            )
+            run_voice_interaction_loop(assistant, duration, timeout, phrase_limit)
         elif run_mode == 'text':
-            main_task = asyncio.create_task(
-                run_text_interaction_loop(assistant),
-                name="TextInteractionLoop"
-            )
+            run_text_interaction_loop(assistant)
         else:
             print(f"Error: Invalid run mode '{run_mode}'")
             sys.exit(1)
 
-        # Now that main_task exists, add the signal handler
-        loop.add_signal_handler(signal.SIGINT, handle_shutdown_signal, main_task)
+        print("Main loop finished (likely due to user exit request).")
 
-        await main_task
-         # --- End Main Loop Task --- 
-        print("Main loop exited.")
-
+    except KeyboardInterrupt:
+         print("\nKeyboard interrupt detected by main. Initiating shutdown...")
+         
     except Exception as e:
          print(f"\nAn unexpected fatal error occurred during setup or loop: {e}")
          traceback.print_exc()
     
     finally:
-        try:
-            loop = asyncio.get_running_loop()
-            if loop and not loop.is_closed():
-                try:
-                    loop.remove_signal_handler(signal.SIGINT)
-                except RuntimeError:
-                     print("No running event loop to remove signal handler from.")
-                except Exception as e_remove:
-                    print(f"Error removing signal handler: {e_remove}")
-        except RuntimeError:
-             print("No running event loop to remove signal handler from.")
-        except Exception as e_remove:
-            print(f"Error removing signal handler: {e_remove}")
-        
-        # --- Summarization on Graceful Shutdown --- 
-        if shutdown_requested and assistant: 
-            print("\n--- Running Session Summarization --- ")
+        print("\n--- Attempting Session Summarization --- ")
+        if assistant: 
             if hasattr(assistant, 'conversation_manager') and \
                hasattr(assistant, 'component_manager') and \
                hasattr(assistant.component_manager, 'llm_handler'):
@@ -144,7 +108,7 @@ async def main():
                     print("[Summarizer] No conversation history to summarize.")
                 else:
                     try:
-                        summary = await summarize_conversation(history, llm_handler_inst)
+                        summary = summarize_conversation(history, llm_handler_inst)
                         if summary:
                             save_summary(summary, len(history), base_data_path=data_path_value) 
                     except Exception as summary_e:
@@ -152,9 +116,10 @@ async def main():
                         traceback.print_exc()
             else:
                 print("[Summarizer] Assistant components missing, cannot summarize.")
-            print("--- Session Summarization Finished --- ")
-        # --------------------------------------------
-
+        else:
+            print("[Summarizer] Assistant object not created, cannot summarize.")
+        print("--- Session Summarization Finished --- ")
+        
         print("Performing final cleanup...") 
         if assistant and hasattr(assistant, 'component_manager'):
             try:
@@ -166,9 +131,9 @@ async def main():
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        main()
     except Exception as e:
-        print(f"\nUnhandled exception during asyncio execution: {e}")
+        print(f"\nUnhandled top-level exception during execution: {e}")
         traceback.print_exc()
     finally:
         print("Application exiting.")

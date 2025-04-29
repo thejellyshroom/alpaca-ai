@@ -1,6 +1,5 @@
 # src/utils/session_utils.py
 
-import asyncio
 from datetime import datetime
 import os
 import traceback
@@ -53,9 +52,8 @@ def _call_ollama_sync_for_summary(model_name: str, messages: list[dict], params:
         traceback.print_exc()
         return "[Error generating summary via sync helper]"
 
-
-async def summarize_conversation(history: list[dict], llm_handler: LLMHandler) -> str:
-    """Generates a summary of the conversation history using the extraction LLM via an executor."""
+def summarize_conversation(history: list[dict], llm_handler: LLMHandler) -> str:
+    """Generates a summary of the conversation history using the extraction LLM synchronously."""
     if not history:
         print("[Summarizer] History is empty, skipping summarization.")
         return ""
@@ -91,22 +89,20 @@ async def summarize_conversation(history: list[dict], llm_handler: LLMHandler) -
     summary_params['temperature'] = 0.3 # Override temperature for summary
     summary_params['top_p'] = 0.9
 
-    print(f"[Summarizer] Requesting summary via executor (model: {model_for_summary}, temp: {summary_params['temperature']})...")
+    print(f"[Summarizer] Requesting summary synchronously (model: {model_for_summary}, temp: {summary_params['temperature']})...")
     try:
-        loop = asyncio.get_running_loop()
-        full_summary = await loop.run_in_executor(
-            None, # Use default executor
-            _call_ollama_sync_for_summary,
+        # Call the synchronous helper directly
+        full_summary = _call_ollama_sync_for_summary(
             model_for_summary,
             summarization_messages,
             summary_params
         )
 
-        print("[Summarizer] Summary received from executor.")
+        print("[Summarizer] Summary received.")
         return full_summary # Already stripped in the helper
 
     except Exception as e:
-        print(f"[Summarizer] Error during LLM call via executor for summarization: {e}")
+        print(f"[Summarizer] Error during synchronous LLM call for summarization: {e}")
         traceback.print_exc()
         return "[Error generating summary]"
 

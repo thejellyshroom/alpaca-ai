@@ -1,0 +1,20 @@
+{
+  "default": {
+    "tts_name": "kokoro",
+    "model": "hexgrad/Kokoro-82M",
+    "kokoro": {
+      "available_voices": [
+        "af_heart", "af_alloy", "af_aoede", "af_bella", "af_jessica", 
+        "af_kore", "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky",
+        "e_asif", "e_cassie", "e_emma", "e_jack", "e_jeremy", "e_josh", "e_lucy", "e_maria"
+      ],
+      "voice": "af_heart",
+      "device": "cpu",
+      "speed": 1.4,
+      "sample_rate": 24000,
+      "expressiveness": 1.0,
+      "variability": 0.2,
+      "sentence_silence": 0.0
+    }
+  }
+}

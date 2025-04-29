@@ -62,8 +62,8 @@ class OutputHandler:
         return remaining_buffer, initial_words_spoken, interrupted
     # --- End Helper --- 
 
-    async def speak(self, response_source):
-        """Convert text response (string or generator) to speech (Moved from AlpacaInteraction._speak)."""
+    def speak(self, response_source):
+        """Convert text response (string or generator) to speech (Synchronous)."""
         tts_handler: Optional[TTSHandler] = self.component_manager.tts_handler
         audio_handler: Optional[AudioHandler] = self.component_manager.audio_handler
         # Assuming AudioHandler has the detector reference needed for interrupt listening
@@ -73,19 +73,20 @@ class OutputHandler:
         if not tts_enabled or not audio_handler or not tts_handler or not detector:
             print("TTS is disabled or handlers/detector not available. Cannot speak.")
             full_response_text = ""
-            # Consume generator if needed, even if not speaking
-            if isinstance(response_source, (types.GeneratorType, types.AsyncGeneratorType)):
+            # Consume only sync generator or handle string
+            if isinstance(response_source, types.GeneratorType):
                  try: 
-                      if isinstance(response_source, types.AsyncGeneratorType):
-                           full_response_text = "".join([item async for item in response_source])
-                      else:
-                           full_response_text = "".join(list(response_source))
+                      full_response_text = "".join(list(response_source))
                  except Exception as e:
                       print(f"Error consuming response generator while TTS disabled: {e}")
                  print(f"assistant (TTS Disabled): {full_response_text}") 
             elif isinstance(response_source, str):
                  full_response_text = response_source
                  print(f"assistant (TTS Disabled): {full_response_text}")
+            else:
+                 # Handle unexpected type if needed
+                 print(f"assistant (TTS Disabled): [Unexpected Type: {type(response_source)}]")
+                 return ("DISABLED", f"[Unexpected Type: {type(response_source)}]")
             return ("DISABLED", full_response_text) 
 
         interrupt_event = threading.Event() 
@@ -108,22 +109,8 @@ class OutputHandler:
             else:
                 interrupt_event = threading.Event()
 
-            # --- Handle Async Generator --- 
-            if isinstance(response_source, types.AsyncGeneratorType):
-                async for token in response_source: 
-                    if interrupt_event.is_set(): interrupted = True; break
-                    print(token, end="", flush=True) 
-                    full_response_text += token
-                    tts_buffer += token
-                    
-                    tts_buffer, initial_words_spoken, chunk_interrupted = self._process_tts_buffer(tts_buffer, initial_words_spoken, interrupt_event)
-                    if chunk_interrupted: interrupted = True; break
-                    # Small yield allows interrupt listener thread to run
-                    await asyncio.sleep(0.01)
-                print() # Newline after loop
-
             # --- Handle Sync Generator --- 
-            elif isinstance(response_source, types.GeneratorType):
+            if isinstance(response_source, types.GeneratorType):
                  for token in response_source:
                      if interrupt_event.is_set(): interrupted = True; break
                      print(token, end="", flush=True) 
@@ -174,7 +161,7 @@ class OutputHandler:
                          playback_completed_normally = False 
                          break 
                     # Use asyncio sleep for async context, time.sleep if called synchronously (though speak is async)
-                    await asyncio.sleep(0.1)
+                    time.sleep(0.1)
 
             # --- Return Status (Common Logic) --- 
             if interrupted:

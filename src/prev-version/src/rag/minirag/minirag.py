@@ -3,7 +3,7 @@ import os
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from functools import partial
-from typing import Type, cast, Any, Union, List, Optional, AsyncIterator, Generator
+from typing import Type, cast, Any, Union, List, Optional
 from dotenv import load_dotenv
 
 
@@ -108,6 +108,8 @@ def always_get_an_event_loop() -> asyncio.AbstractEventLoop:
         return current_loop
 
     except RuntimeError:
+        # If no event loop exists or it is closed, create a new one
+        logger.info("Creating a new event loop in main thread.")
         new_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(new_loop)
         return new_loop
@@ -202,11 +204,14 @@ class MiniRAG:
         set_logger(log_file)
         logger.setLevel(self.log_level)
 
+        logger.info(f"Logger initialized for working directory: {self.working_dir}")
         if not os.path.exists(self.working_dir):
+            logger.info(f"Creating working directory {self.working_dir}")
             os.makedirs(self.working_dir)
 
         # show config using self.global_config
         _print_config = ",\n  ".join([f"{k} = {v}" for k, v in self.global_config.items()])
+        logger.debug(f"MiniRAG init with effective config:\n  {_print_config}\n")
 
         # @TODO: should move all storage setup here to leverage initial start params attached to self.
 
@@ -238,6 +243,7 @@ class MiniRAG:
         )
 
         if not os.path.exists(self.working_dir):
+            logger.info(f"Creating working directory {self.working_dir}")
             os.makedirs(self.working_dir)
 
         self.llm_response_cache = (
@@ -302,20 +308,11 @@ class MiniRAG:
             embedding_func=self.embedding_func,
         )
 
-        explicit_ollama_model = self.llm_model_kwargs.get("ollama_model")
-        if not explicit_ollama_model:
-            print(f"[Warning] 'ollama_model' not found in llm_model_kwargs during MiniRAG init. Using llm_model_name: {self.llm_model_name}")
-            explicit_ollama_model = self.llm_model_name # Fallback to the base llm_model_name
-        
-        other_kwargs = self.llm_model_kwargs.copy()
-        other_kwargs.pop("ollama_model", None) 
-        
         self.llm_model_func = limit_async_func_call(self.llm_model_max_async)(
             partial(
-                self.llm_model_func, 
-                ollama_model=explicit_ollama_model, 
+                self.llm_model_func,
                 hashing_kv=self.llm_response_cache,
-                **other_kwargs, # Should no longer contain stream=True unless originally passed
+                **self.llm_model_kwargs,
             )
         )
         # Initialize document status storage
@@ -351,35 +348,10 @@ class MiniRAG:
             # set client
             storage.db = db_client
 
-    # --- ADD SYNC WRAPPER ---
-    def insert(self, string_or_strings, ids: Optional[Union[str, list[str]]] = None):
-        """Synchronous wrapper for ainsert."""
-        # Get or create event loop and run ainsert
-        try:
-            loop = asyncio.get_running_loop()
-            # Check if loop is running. If so, cannot use run_until_complete directly
-            if loop.is_running():
-                 # This is tricky. Running async code from sync within a running loop
-                 # often requires careful handling (e.g., using threads or specific libraries).
-                 # For simplicity, raise an error or log a warning.
-                 # A more robust solution might involve creating a new thread for a new loop.
-                 logger.error("Cannot call synchronous insert from within an already running asyncio event loop.")
-                 # Option 1: Raise error
-                 # raise RuntimeError("Sync insert cannot be called from a running event loop.")
-                 # Option 2: Fallback (might still block unexpectedly depending on context)
-                 # Or, use the old 'always_get_an_event_loop' logic if needed, but be wary.
-                 loop = always_get_an_event_loop() # Potentially problematic if called from nested async
-                 return loop.run_until_complete(self.ainsert(string_or_strings, ids=ids))
+    def insert(self, string_or_strings):
+        loop = always_get_an_event_loop()
+        return loop.run_until_complete(self.ainsert(string_or_strings))
 
-            else:
-                 # If loop exists but isn't running, run until complete
-                 return loop.run_until_complete(self.ainsert(string_or_strings, ids=ids))
-        except RuntimeError:
-             # No loop exists, use asyncio.run (creates and closes a loop)
-             return asyncio.run(self.ainsert(string_or_strings, ids=ids))
-    # --- END SYNC WRAPPER ---
-
-    # Keep the async version
     async def ainsert(
         self,
         input: Union[str, list[str]],
@@ -397,7 +369,7 @@ class MiniRAG:
             split_by_character, split_by_character_only
         )
 
-        # --- Prepare chunks for entity extraction --- 
+        # Perform additional entity extraction as per original ainsert logic
         inserting_chunks = {
             compute_mdhash_id(dp["content"], prefix="chunk-"): {
                 **dp,
@@ -416,17 +388,14 @@ class MiniRAG:
 
         if inserting_chunks:
             logger.info("Performing entity extraction on newly processed chunks")
-            # --- Pass self.llm_model_func directly --- 
             await extract_entities(
-                chunks=inserting_chunks,
+                inserting_chunks,
                 knowledge_graph_inst=self.chunk_entity_relation_graph,
                 entity_vdb=self.entities_vdb,
                 entity_name_vdb=self.entity_name_vdb,
                 relationships_vdb=self.relationships_vdb,
-                llm_model_func=self.llm_model_func, # Pass the partial object directly
-                global_config=self.global_config, # Still needed for other configs
+                global_config=self.global_config, # Pass the stored config
             )
-            # --- End Pass --- 
  
         await self._insert_done()
 
@@ -519,6 +488,7 @@ class MiniRAG:
             list(to_process_docs.items())[i : i + self.max_parallel_insert]
             for i in range(0, len(to_process_docs), self.max_parallel_insert)
         ]
+        logger.info(f"Number of batches to process: {len(docs_batches)}")
 
         for batch_idx, docs_batch in enumerate(docs_batches):
             for doc_id, status_doc in docs_batch:
@@ -570,62 +540,24 @@ class MiniRAG:
                 continue
             tasks.append(cast(StorageNameSpace, storage_inst).index_done_callback())
         await asyncio.gather(*tasks)
-        
-    # --- ADD SYNC WRAPPER ---
-    def query(self, query: str, param: QueryParam = QueryParam()) -> Union[str, Generator[str, None, None]]:
-        """Synchronous wrapper for aquery."""
-        # Determine return type based on aquery's potential return types
-        # Since aquery might return AsyncIterator, we need to handle that.
-        # The synchronous version should ideally return a standard Iterator/Generator or a string.
 
-        async def run_and_consume_async_gen():
-            result = await self.aquery(query, param)
-            if isinstance(result, AsyncIterator):
-                return [item async for item in result] # Consume async generator into a list
-            else:
-                return result # Assume it's already a string
+    def query(self, query: str, param: QueryParam = QueryParam()):
+        loop = always_get_an_event_loop()
+        return loop.run_until_complete(self.aquery(query, param))
 
-        try:
-            loop = asyncio.get_running_loop()
-            if loop.is_running():
-                logger.error("Cannot call synchronous query from within an already running asyncio event loop.")
-                # Handle as in insert, potential issues
-                # raise RuntimeError("Sync query cannot be called from a running event loop.")
-                loop = always_get_an_event_loop()
-                consumed_result = loop.run_until_complete(run_and_consume_async_gen())
-            else:
-                consumed_result = loop.run_until_complete(run_and_consume_async_gen())
-        except RuntimeError:
-             consumed_result = asyncio.run(run_and_consume_async_gen())
-
-        # If the result was originally a generator (now a list), return a sync generator
-        if isinstance(consumed_result, list):
-            def sync_generator():
-                yield from consumed_result
-            return sync_generator()
-        else: # Otherwise, return the string directly
-            return consumed_result
-    # --- END SYNC WRAPPER ---
-
-    # Keep the async version
-    async def aquery(self, query: str, param: QueryParam = QueryParam()) -> Union[str, AsyncIterator[str]]:
-        # --- Pass self.llm_model_func directly --- 
-        llm_func = self.llm_model_func # Get the configured partial object
-        
-        # --- The underlying function now returns the generator --- 
+    async def aquery(self, query: str, param: QueryParam = QueryParam()):
         if param.mode == "light":
-            response_generator = await hybrid_query(
+            response = await hybrid_query(
                 query,
                 self.chunk_entity_relation_graph,
                 self.entities_vdb,
                 self.relationships_vdb,
                 self.text_chunks,
                 param,
-                llm_model_func=llm_func, 
-                global_config=self.global_config, 
+                self.global_config, # Pass the stored config
             )
         elif param.mode == "mini":
-            response_generator = await minirag_query(
+            response = await minirag_query(
                 query,
                 self.chunk_entity_relation_graph,
                 self.entities_vdb,
@@ -635,24 +567,20 @@ class MiniRAG:
                 self.text_chunks,
                 self.embedding_func,
                 param,
-                llm_model_func=llm_func, 
-                global_config=self.global_config,
+                self.global_config, # Pass the stored config
             )
         elif param.mode == "naive":
-            response_generator = await naive_query(
+            response = await naive_query(
                 query,
                 self.chunks_vdb,
                 self.text_chunks,
                 param,
-                llm_model_func=llm_func, 
-                global_config=self.global_config,
+                self.global_config, # Pass the stored config
             )
         else:
             raise ValueError(f"Unknown mode {param.mode}")
-        
         await self._query_done()
-        # --- Return the generator directly --- 
-        return response_generator
+        return response
 
     async def _query_done(self):
         tasks = []
@@ -662,16 +590,9 @@ class MiniRAG:
             tasks.append(cast(StorageNameSpace, storage_inst).index_done_callback())
         await asyncio.gather(*tasks)
 
-    # --- Keep delete sync wrapper if needed ---
     def delete_by_entity(self, entity_name: str):
-        # Use asyncio.run for simplicity here, assuming delete is less frequently called from nested async
-        try:
-            return asyncio.run(self.adelete_by_entity(entity_name))
-        except RuntimeError as e:
-             # Handle potential loop already running error if necessary
-             logger.error(f"RuntimeError calling sync delete_by_entity: {e}. Falling back to get_event_loop.")
-             loop = always_get_an_event_loop()
-             return loop.run_until_complete(self.adelete_by_entity(entity_name))
+        loop = always_get_an_event_loop()
+        return loop.run_until_complete(self.adelete_by_entity(entity_name))
 
     async def adelete_by_entity(self, entity_name: str):
         entity_name = f'"{entity_name.upper()}"'
@@ -680,6 +601,10 @@ class MiniRAG:
             await self.entities_vdb.delete_entity(entity_name)
             await self.relationships_vdb.delete_relation(entity_name)
             await self.chunk_entity_relation_graph.delete_node(entity_name)
+
+            logger.info(
+                f"Entity '{entity_name}' and its relationships have been deleted."
+            )
             await self._delete_by_entity_done()
         except Exception as e:
             logger.error(f"Error while deleting entity '{entity_name}': {e}")

@@ -46,12 +46,18 @@ def find_txt_files(root_path):
             if file.endswith(".txt") and not file.startswith('.') and not file.startswith('._'):
                 full_path = os.path.join(root, file)
                 txt_files.append(full_path)
+                # print(f"  Found: {full_path}") # Optional: verbose logging
+            elif file.startswith('.') or file.startswith('._'):
+                print(f"[Info] Skipping hidden/metadata file: {os.path.join(root, file)}")
+            elif not file.endswith(".txt"):
+                print(f"[Info] Skipping non-txt file: {os.path.join(root, file)}")
                 
     print(f"Found {len(txt_files)} .txt files to potentially process.")
     return txt_files
 
-# Make run_indexing async
 def run_indexing():
+    """Main function to run the indexing process."""
+    print("--- Starting MiniRAG Indexing Process ---")
     load_dotenv() # Load environment variables from .env
 
     # --- Configuration from Environment Variables ---
@@ -74,14 +80,22 @@ def run_indexing():
     if EXTRACTION_LLM_MODEL:
         raw_extraction_model = EXTRACTION_LLM_MODEL
         EXTRACTION_LLM_MODEL = raw_extraction_model.split('#')[0].strip().strip('"').strip("'")
-    print(f"EXTRACTION_LLM_MODEL: '{EXTRACTION_LLM_MODEL}'")
+        print(f"Cleaned EXTRACTION_LLM_MODEL: '{EXTRACTION_LLM_MODEL}' (from '{raw_extraction_model}')")
+
+    print(f"WORKING_DIR: {WORKING_DIR}")
+    print(f"DATA_PATH: {DATA_PATH}")
     print(f"EMBEDDING_MODEL: {EMBEDDING_MODEL}")
     print(f"EXTRACTION_LLM_MODEL: {EXTRACTION_LLM_MODEL}")
+    print(f"LLM_MAX_TOKEN_SIZE: {LLM_MAX_TOKEN_SIZE}")
     print(f"LLM_MAX_ASYNC: {LLM_MAX_ASYNC}")
     
+    # Ensure working directory exists
     os.makedirs(WORKING_DIR, exist_ok=True)
 
+    # --- Initialize Embedding Function ---
     embedding_func = setup_embedding_func(EMBEDDING_MODEL)
+
+    # --- Initialize MiniRAG for Extraction ---
     print(f"\n--- Initializing MiniRAG for Extraction ({EXTRACTION_LLM_MODEL}) ---")
     try:
         rag_extractor = MiniRAG(
@@ -92,6 +106,7 @@ def run_indexing():
             llm_model_kwargs={"ollama_model": EXTRACTION_LLM_MODEL}, # Pass Ollama model name
             embedding_func=embedding_func,
         )
+        print("MiniRAG Extractor initialized.")
     except Exception as e:
         print(f"Error initializing MiniRAG Extractor: {e}")
         traceback.print_exc()
@@ -104,6 +119,7 @@ def run_indexing():
         try:
             with open(kv_store_path, "r", encoding="utf-8") as kv_file:
                 doc_status = json.load(kv_file)
+            print(f"Loaded processing status for {len(doc_status)} files from {kv_store_path}")
         except json.JSONDecodeError:
              print(f"Warning: Could not decode JSON from {kv_store_path}. Starting with empty status.")
         except Exception as e:
@@ -117,15 +133,18 @@ def run_indexing():
     error_count = 0
 
     for i, file_path in enumerate(files_to_process):
+        relative_path = os.path.relpath(file_path, DATA_PATH) # Use relative path as key? Or full path? Let's use full.
         file_key = file_path 
+        
+        # Check status using the chosen key
         if doc_status.get(file_key, {}).get("status") == "processed":
+            # print(f"[Info] Skipping already processed file: {file_path}")
             skipped_count += 1
             continue
 
-        print(f"--- Processing file {i+1}/{len(files_to_process)}: {file_path} --- ")
+        print(f"--- Processing file {i+1}/{len(files_to_process)}: {file_path} ---")
         try:
             print(f"[{datetime.now()}] Reading file content...")
-            # Consider using aiofiles for async file reading if files are large
             with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read()
             
@@ -135,16 +154,13 @@ def run_indexing():
                  skipped_count += 1
             else:
                 print(f"[{datetime.now()}] Starting MiniRAG insert...")
-                # --- Use await ainsert --- 
                 rag_extractor.insert(content) 
-                # -------------------------
                 print(f"[{datetime.now()}] Finished MiniRAG insert.")
                 doc_status[file_key] = {"status": "processed", "timestamp": str(datetime.now())}
                 processed_count += 1
 
             # Update status file after each file
             try:
-                # Consider async file write if needed
                 with open(kv_store_path, "w", encoding="utf-8") as kv_file:
                     json.dump(doc_status, kv_file, indent=4)
             except Exception as e:
@@ -152,8 +168,7 @@ def run_indexing():
 
         except Exception as e:
             print(f"***** Error processing file {file_path}: {e} *****")
-            # Log original traceback for the specific file error
-            traceback.print_exc() 
+            traceback.print_exc()
             doc_status[file_key] = {"status": "error", "error_message": str(e), "timestamp": str(datetime.now())}
             error_count += 1
             # Save status even on error
