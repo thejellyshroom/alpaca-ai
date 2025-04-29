@@ -74,8 +74,6 @@ def main():
         timeout = assistant.timeout_arg
         phrase_limit = assistant.phrase_limit_arg
 
-        # --- Run Main Loop Synchronously --- 
-        print("Starting main interaction loop...")
         if run_mode == 'voice':
             run_voice_interaction_loop(assistant, duration, timeout, phrase_limit)
         elif run_mode == 'text':
@@ -84,7 +82,7 @@ def main():
             print(f"Error: Invalid run mode '{run_mode}'")
             sys.exit(1)
 
-        print("Main loop finished (likely due to user exit request).")
+        print("Main loop finished.")
 
     except KeyboardInterrupt:
          print("\nKeyboard interrupt detected by main. Initiating shutdown...")
@@ -120,7 +118,6 @@ def main():
             print("[Summarizer] Assistant object not created, cannot summarize.")
         print("--- Session Summarization Finished --- ")
         
-        print("Performing final cleanup...") 
         if assistant and hasattr(assistant, 'component_manager'):
             try:
                 assistant.component_manager.cleanup()

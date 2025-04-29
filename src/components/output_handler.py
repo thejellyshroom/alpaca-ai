@@ -66,7 +66,6 @@ class OutputHandler:
         """Convert text response (string or generator) to speech (Synchronous)."""
         tts_handler: Optional[TTSHandler] = self.component_manager.tts_handler
         audio_handler: Optional[AudioHandler] = self.component_manager.audio_handler
-        # Assuming AudioHandler has the detector reference needed for interrupt listening
         detector = getattr(audio_handler, 'detector', None) if audio_handler else None
         tts_enabled = self.component_manager.tts_enabled
 
@@ -84,7 +83,6 @@ class OutputHandler:
                  full_response_text = response_source
                  print(f"assistant (TTS Disabled): {full_response_text}")
             else:
-                 # Handle unexpected type if needed
                  print(f"assistant (TTS Disabled): [Unexpected Type: {type(response_source)}]")
                  return ("DISABLED", f"[Unexpected Type: {type(response_source)}]")
             return ("DISABLED", full_response_text) 
@@ -109,7 +107,7 @@ class OutputHandler:
             else:
                 interrupt_event = threading.Event()
 
-            # --- Handle Sync Generator --- 
+            # --- Handle Generator --- 
             if isinstance(response_source, types.GeneratorType):
                  for token in response_source:
                      if interrupt_event.is_set(): interrupted = True; break
@@ -119,7 +117,7 @@ class OutputHandler:
                      
                      tts_buffer, initial_words_spoken, chunk_interrupted = self._process_tts_buffer(tts_buffer, initial_words_spoken, interrupt_event)
                      if chunk_interrupted: interrupted = True; break
-                     # Needs yield in sync loop too for interrupt listener
+                     # Needs yield in sync loop for interrupt listener
                      time.sleep(0.01) 
                  print() # Newline after loop
 

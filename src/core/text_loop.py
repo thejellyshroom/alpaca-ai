@@ -10,9 +10,6 @@ def run_text_interaction_loop(assistant):
     while True:
         try:
             print("You: ", end="", flush=True)
-            
-            # Use synchronous input
-            # input_task = asyncio.create_task(asyncio.to_thread(sys.stdin.readline)) <-- Remove async input
             try:
                 user_input_line = sys.stdin.readline()
                 if not user_input_line: # Handle EOF
@@ -31,27 +28,18 @@ def run_text_interaction_loop(assistant):
             if not user_input:
                 continue
 
-            # Call the synchronous text interaction handler
             print("Assistant: Thinking...") 
-            # response_generator = await assistant.interaction_handler.run_single_text_interaction(user_input) <-- Remove await
             response_generator = assistant.interaction_handler.run_single_text_interaction(user_input)
 
             # Stream the output and accumulate the full response
             response_chunks = []
             print("Assistant: ", end="", flush=True) # Print prefix before streaming
             try:
-                # Only handle sync generators now
-                # if isinstance(response_generator, types.AsyncGeneratorType): <-- Remove async generator check
-                #     async for chunk in response_generator:
-                #         print(chunk, end="", flush=True)
-                #         response_chunks.append(chunk)
                 if isinstance(response_generator, types.GeneratorType):
                     for chunk in response_generator:
                         print(chunk, end="", flush=True)
                         response_chunks.append(chunk)
-                        # Add a small sleep to yield control, optional
-                        # time.sleep(0.001)
-                elif isinstance(response_generator, str): # Handle if it returns a string directly
+                elif isinstance(response_generator, str):
                      print(response_generator)
                      response_chunks.append(response_generator)
                 else:
@@ -64,19 +52,13 @@ def run_text_interaction_loop(assistant):
                 traceback.print_exc()
                 continue
 
-            # Join chunks and add full response to history
             full_response_text = "".join(response_chunks)
             if full_response_text and not full_response_text.startswith(("[Error", "ERROR:")):
                  assistant.conversation_manager.add_assistant_message(full_response_text)
             elif not full_response_text:
                  print("Warning: Assistant generated an empty response after streaming.")
 
-        # Remove asyncio.CancelledError handling
-        # except asyncio.CancelledError:
-        #     print("[Text Loop] Main task cancelled, exiting loop.")
-        #     break
         except KeyboardInterrupt:
-            # Already handled during input, but catch here just in case it happens elsewhere
             print("\n[Text Loop] KeyboardInterrupt caught, exiting.")
             break
         except Exception as loop_e:
