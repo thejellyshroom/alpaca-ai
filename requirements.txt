@@ -1,1 +1,36 @@
-python-dotenv 
+# Core
+python-dotenv
+
+# LLM & RAG
+ollama
+transformers # For sentence-transformers/embedding models used by minirag
+tiktoken # For tokenization in minirag
+nltk # For text processing in minirag
+rouge-score # For text processing in minirag
+json_repair # Used by minirag
+tenacity # Used by minirag
+# networkx # Optional: Add if using NetworkX graph storage in minirag
+
+# ASR (Speech-to-Text)
+faster-whisper
+SpeechRecognition # Often used as a fallback or alternative
+
+# TTS (Text-to-Speech)
+# Add specific TTS library dependencies here (e.g., google-cloud-texttospeech, TTS, etc.)
+
+# Audio Handling & VAD
+pyaudio # Or portaudio, check system requirements
+sounddevice
+soundfile
+silero-vad
+onnxruntime # Dependency for silero-vad
+
+# ML/Numerical
+numpy
+torch
+torchaudio
+torchvision
+# Ensure torch versions are compatible!
+
+# Utilities
+pipmaster # Used by minirag for checks, maybe remove if installations are manual 
