@@ -1286,6 +1286,7 @@ async def _build_mini_query_context(
     imp_ents = []
     nodes_from_query_list = []
     ent_from_query_dict = {}
+    results_node = [] # Initialize results_node here
 
     for ent in ent_from_query:
         ent_from_query_dict[ent] = []

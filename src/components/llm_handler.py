@@ -14,7 +14,7 @@ from config.personality_config import PERSONALITY_CORE
 from minirag.prompt import PROMPTS
 from utils.conversation_manager import format_timedelta
 
-CONTEXT_LENGTH_LIMIT = os.getenv('CONTEXT_LENGTH_LIMIT', '5000')
+CONTEXT_LENGTH_LIMIT = int(os.getenv('CONTEXT_LENGTH_LIMIT', '5000'))
 
 class LLMHandler:
     def __init__(self, config=None):
@@ -165,7 +165,7 @@ class LLMHandler:
         if not self.rag_querier:
             return self.get_response(messages=messages, rag_context=None)
 
-        rag_param = QueryParam(mode="naive", only_need_context=True)
+        rag_param = QueryParam(mode="mini", only_need_context=True)
         rag_query = query
 
         retrieved_context = None
