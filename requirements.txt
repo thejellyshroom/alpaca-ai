@@ -1,36 +1,37 @@
 # Core
-python-dotenv
+python-dotenv==1.0.1
 
 # LLM & RAG
-ollama
-transformers # For sentence-transformers/embedding models used by minirag
-tiktoken # For tokenization in minirag
-nltk # For text processing in minirag
-rouge-score # For text processing in minirag
-json_repair # Used by minirag
-tenacity # Used by minirag
-# networkx # Optional: Add if using NetworkX graph storage in minirag
+ollama==0.4.7
+transformers==4.51.3 # For sentence-transformers/embedding models used by minirag
+tiktoken==0.9.0 # For tokenization in minirag
+nltk==3.8.1 # For text processing in minirag
+rouge-score==0.1.2 # For text processing in minirag
+json_repair==0.41.1 # Used by minirag
+tenacity==8.5.0 # Used by minirag
+# networkx==3.2.1 # Optional: Add if using NetworkX graph storage in minirag
 
 # ASR (Speech-to-Text)
-faster-whisper
-SpeechRecognition # Often used as a fallback or alternative
+faster-whisper==1.1.1
+SpeechRecognition==3.14.1 # Often used as a fallback or alternative
 
 # TTS (Text-to-Speech)
 # Add specific TTS library dependencies here (e.g., google-cloud-texttospeech, TTS, etc.)
+kokoro==0.7.16
 
 # Audio Handling & VAD
-pyaudio # Or portaudio, check system requirements
-sounddevice
-soundfile
-silero-vad
-onnxruntime # Dependency for silero-vad
+pyaudio==0.2.14 # Or portaudio, check system requirements
+sounddevice==0.5.1
+soundfile==0.13.1
+silero-vad==5.1.2
+onnxruntime==1.19.2 # Dependency for silero-vad
 
 # ML/Numerical
-numpy
-torch
-torchaudio
-torchvision
+numpy==1.26.4
+torch==2.6.0
+torchaudio==2.6.0
+torchvision==0.21.0
 # Ensure torch versions are compatible!
 
 # Utilities
-pipmaster # Used by minirag for checks, maybe remove if installations are manual 
+pipmaster==0.5.4 # Used by minirag for checks, maybe remove if installations are manual 
