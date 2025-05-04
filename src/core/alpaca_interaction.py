@@ -72,19 +72,24 @@ class AlpacaInteraction:
             traceback.print_exc()
             return "ERROR"
 
-    def _process_and_respond(self):
-        """Processes the current conversation and decides whether to use RAG synchronously."""
+    # This method needs to be async because it awaits get_rag_response
+    async def _process_and_respond(self):
+        """Processes the current conversation and decides whether to use RAG asynchronously."""
         llm_handler = self.component_manager.llm_handler
         if not llm_handler:
              print("Error: LLM Handler not available.")
-             return "ERROR: LLM Handler not available." # Or raise an exception
+             # Return an empty async generator for consistency?
+             async def error_gen(): 
+                 yield "Error: LLM Handler not available."
+                 if False: yield # Make it an async generator
+             return error_gen()
         
         conversation_history = self.conversation_manager.get_history()
         last_user_message = conversation_history[-1]['content'] if conversation_history and conversation_history[-1]['role'] == 'user' else ""
 
         if llm_handler.rag_querier: # Check for the initialized MiniRAG querier instance
             print("RAG querier available.")
-            return llm_handler.get_rag_response(query=last_user_message, messages=conversation_history)
+            return await llm_handler.get_rag_response(query=last_user_message, messages=conversation_history)
         else:
             print("RAG not available or disabled.")
             return llm_handler.get_response(messages=conversation_history) 
@@ -183,17 +188,28 @@ class AlpacaInteraction:
             if audio_handler: audio_handler.stop_playback()
             return "ERROR", str(e) 
 
+    # Make this async as it calls the async _process_and_respond
     async def run_single_text_interaction(self, user_text: str):
         """Processes text input and returns an async generator for the response stream."""
+        llm_handler = self.component_manager.llm_handler # Get llm_handler here
         try:
             if not user_text:
                 print("Warning: Received empty text input.")
-                def empty_gen():
+                # Return an empty async generator
+                async def empty_gen():
                     if False: yield
-                return empty_gen() # Or return ""
+                return empty_gen()
 
+            # Add user message to history
             self.conversation_manager.add_user_message(user_text)
-            response_source = self._process_and_respond() 
+            
+            # Get response generator (RAG or base LLM) - Now awaits the async method
+            response_source = await self._process_and_respond() 
+
+            # Check the return type from _process_and_respond
+            # It should be a generator (sync from ollama or async if RAG returned async gen)
+            # The API handler needs to handle both types correctly. 
+            # For now, just return what we get.
             return response_source
 
         except Exception as e:

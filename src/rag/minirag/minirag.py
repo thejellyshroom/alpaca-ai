@@ -571,43 +571,19 @@ class MiniRAG:
             tasks.append(cast(StorageNameSpace, storage_inst).index_done_callback())
         await asyncio.gather(*tasks)
         
-    # --- ADD SYNC WRAPPER ---
-    def query(self, query: str, param: QueryParam = QueryParam()) -> Union[str, Generator[str, None, None]]:
-        """Synchronous wrapper for aquery."""
-        # Determine return type based on aquery's potential return types
-        # Since aquery might return AsyncIterator, we need to handle that.
-        # The synchronous version should ideally return a standard Iterator/Generator or a string.
+    # --- REMOVE SYNC WRAPPER or make it truly async ---
+    # Let's make it async as the caller context (FastAPI) is async.
+    async def query(self, query: str, param: QueryParam = QueryParam()) -> Union[str, AsyncIterator[str]]: # Return AsyncIterator
+        """Asynchronous query method."""
+        # Directly call and return the result of aquery
+        # The actual logic is handled within aquery and its called functions
+        logger.debug(f"Executing async query: '{query[:50]}...' with mode '{param.mode}'")
+        result = await self.aquery(query, param)
+        logger.debug(f"Async query finished for: '{query[:50]}...'")
+        return result
 
-        async def run_and_consume_async_gen():
-            result = await self.aquery(query, param)
-            if isinstance(result, AsyncIterator):
-                return [item async for item in result] # Consume async generator into a list
-            else:
-                return result # Assume it's already a string
-
-        try:
-            loop = asyncio.get_running_loop()
-            if loop.is_running():
-                logger.error("Cannot call synchronous query from within an already running asyncio event loop.")
-                # Handle as in insert, potential issues
-                # raise RuntimeError("Sync query cannot be called from a running event loop.")
-                loop = always_get_an_event_loop()
-                consumed_result = loop.run_until_complete(run_and_consume_async_gen())
-            else:
-                consumed_result = loop.run_until_complete(run_and_consume_async_gen())
-        except RuntimeError:
-             consumed_result = asyncio.run(run_and_consume_async_gen())
-
-        # If the result was originally a generator (now a list), return a sync generator
-        if isinstance(consumed_result, list):
-            def sync_generator():
-                yield from consumed_result
-            return sync_generator()
-        else: # Otherwise, return the string directly
-            return consumed_result
-    # --- END SYNC WRAPPER ---
-
-    # Keep the async version
+    # --- Keep the original async version (now called by the async query) ---
+    # Note: aquery now doesn't need to be called directly from outside if query is async
     async def aquery(self, query: str, param: QueryParam = QueryParam()) -> Union[str, AsyncIterator[str]]:
         # --- Pass self.llm_model_func directly --- 
         llm_func = self.llm_model_func # Get the configured partial object

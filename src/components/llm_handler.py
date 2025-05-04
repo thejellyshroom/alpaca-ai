@@ -160,32 +160,54 @@ class LLMHandler:
              traceback.print_exc()
              yield f"[Error communicating with base LLM: {e}]" # Yield error message
                 
-    def get_rag_response(self, query: str, messages: list[Dict[str, Any]]) -> Generator[str, None, None]:
+    async def get_rag_response(self, query: str, messages: list[Dict[str, Any]]) -> Generator[str, None, None]:
         """Uses MiniRAG to retrieve context based *only* on the latest query, then calls get_response to generate the final answer."""
         if not self.rag_querier:
             return self.get_response(messages=messages, rag_context=None)
 
-        rag_param = QueryParam(mode="mini", only_need_context=True)
-        rag_query = query
-
-        retrieved_context = None
         try:
-            context_result = self.rag_querier.query(
-                rag_query,
-                param=rag_param
+            if not self.rag_querier:
+                 raise ValueError("RAG querier is not initialized.")
+            
+            print("Attempting RAG query...")
+            # Call the RAG query method - Assuming it returns context string or similar
+            # We now need to await the async query method
+            context_result = await self.rag_querier.query(
+                query=query, 
+                param=QueryParam(
+                    mode="mini", 
+                    only_need_context=True
+                )
             )
+            print(f"RAG Query Result Type: {type(context_result)}")
 
-            if isinstance(context_result, str) and context_result != PROMPTS["fail_response"]:
-                print(f"RAG retrieval successful. Context length: {len(context_result)}")
-                retrieved_context = context_result
-            elif context_result is None:
-                 print("RAG retrieval returned None (no context found).")
+            # Check if the result is usable context (adjust based on actual return type)
+            # If query returns a generator, we need to consume it here to get the context.
+            # Assuming for now query returns a string context or None/empty string on failure.
+            context_str = ""
+            if isinstance(context_result, str):
+                 context_str = context_result
+            elif hasattr(context_result, '__aiter__'): # Check if it's an async iterator
+                 print("Consuming RAG async generator result...")
+                 context_str = "".join([chunk async for chunk in context_result])
+            elif hasattr(context_result, '__iter__'): # Check if it's a sync iterator
+                 print("Consuming RAG sync generator result...")
+                 context_str = "".join(list(context_result))
+
+            if context_str and context_str.strip():
+                rag_context = context_str.strip()
+                print(f"RAG Context Retrieved ({len(rag_context)} chars): '{rag_context[:100]}...'")
             else:
-                 print(f"RAG retrieval failed or returned fail response: {context_result}")
-
+                print("RAG query returned no usable context.")
+                rag_context = None # Ensure it's None if empty or invalid
+                
+        except ValueError as ve:
+             print(f"RAG configuration error: {ve}")
         except Exception as e:
             print(f"\nError during RAG context retrieval: {e}")
             traceback.print_exc()
-            retrieved_context = None
+            # Fall through to base LLM call if RAG fails
+            
+        # --- Prepare messages for final LLM call --- 
 
-        return self.get_response(messages=messages, rag_context=retrieved_context)
+        return self.get_response(messages=messages, rag_context=rag_context)
