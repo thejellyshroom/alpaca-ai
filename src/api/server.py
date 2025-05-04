@@ -4,7 +4,8 @@ import sys
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from typing import Dict, Any, Union
+from typing import Dict, Any, Union, Optional
+from asyncio import Queue
 
 # --- Add project root to sys.path ---
 # This allows importing modules from src, utils, etc.
@@ -39,9 +40,11 @@ app = FastAPI(
 )
 
 # --- State Variables ---
-# Keep track of active connections, VAD settings, etc. for the WS endpoint
-# E.g., active_connection: WebSocket | None = None
-# E.g., is_vad_interrupt_enabled: bool = True # Default VAD setting per connection might be better
+# For simplicity, we manage task state globally for a single connection.
+# In a multi-user scenario, this state would need to be managed per WebSocket connection.
+current_interaction_task: Optional[asyncio.Task] = None
+queue_reader_task: Optional[asyncio.Task] = None
+interaction_queue: Optional[Queue] = None
 # ---------------------
 
 @app.on_event("startup")
@@ -57,7 +60,7 @@ async def startup_event():
     #     print("--- Running RAG Indexing --- ")
     #     from rag.indexer import run_indexing # Import locally if run here
     #     await run_indexing()
-    #     print("--- RAG Indexing Complete --- \\n")
+    #     print("--- RAG Indexing Complete --- \n")
     # except Exception as e:
     #     print(f"***** WARNING: ERROR DURING RAG INDEXING *****: {e}")
     #     print("***** RAG features may be unavailable or outdated. *****")
@@ -87,8 +90,9 @@ async def startup_event():
         # or how certain loops behave, though interaction is driven by WS.
         # We might need to adjust Alpaca.__init__ if 'api' mode needs specific handling.
         # For now, assume it loads necessary components based on config.
-        print("Initializing Alpaca instance...")
-        alpaca_instance = Alpaca(**loaded_config_data, mode='api') # Using 'api' mode
+        # --- CORRECTION: Need 'voice' mode to load audio components for voice interactions --- 
+        print("Initializing Alpaca instance (mode='voice')...")
+        alpaca_instance = Alpaca(**loaded_config_data, mode='voice') # Use 'voice' mode
         print("Alpaca instance initialized successfully for API.")
     except Exception as e:
         print(f"FATAL: Error initializing Alpaca instance: {e}")
@@ -97,13 +101,20 @@ async def startup_event():
         # Prevent startup or run in a degraded state? For now, allow startup but endpoints will fail.
     # ------------------------
     print("API Server startup complete.")
-    # pass # Remove pass
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleans up resources on server shutdown."""
-    global alpaca_instance, loaded_config_data
+    global alpaca_instance, loaded_config_data, current_interaction_task, queue_reader_task
     print("API Server shutting down...")
+    # --- Cancel any running tasks ---
+    if current_interaction_task and not current_interaction_task.done():
+        print("Cancelling active interaction task...")
+        current_interaction_task.cancel()
+    if queue_reader_task and not queue_reader_task.done():
+        print("Cancelling queue reader task...")
+        queue_reader_task.cancel()
+    # -----------------------------
     # --- Cleanup Alpaca Components ---
     if alpaca_instance and hasattr(alpaca_instance, 'component_manager'):
         print("Cleaning up Alpaca components...")
@@ -124,6 +135,8 @@ async def shutdown_event():
     # Clear global state
     alpaca_instance = None
     loaded_config_data = None
+    current_interaction_task = None
+    queue_reader_task = None
     print("API Server shutdown complete.")
 
 
@@ -141,33 +154,57 @@ async def get_config():
             status_code=503
         )
 
+# --- WebSocket Helper ---
+async def handle_interaction_queue(websocket: WebSocket, queue: Queue):
+    """Reads messages from the interaction queue and sends them to the client."""
+    try:
+        while True:
+            message = await queue.get()
+            await websocket.send_json(message)
+            queue.task_done()
+            # If the message indicates the end of interaction (e.g., Idle, Error, Interrupted, Cancelled), stop reading
+            if message.get("type") == "status" and message.get("state") in ["Idle", "Error", "Interrupted", "Cancelled", "Disabled"]:
+                 print(f"[QueueReader] Received final state '{message.get('state')}'. Exiting.")
+                 break
+    except asyncio.CancelledError:
+        print("[QueueReader] Task cancelled.")
+    except WebSocketDisconnect:
+        print("[QueueReader] WebSocket disconnected.")
+    except Exception as e:
+        print(f"[QueueReader] Error: {e}")
+        traceback.print_exc()
+        # Try to send error to client if possible
+        try:
+            await websocket.send_json({"type": "error", "message": f"Queue reader error: {e}", "state": "Error"})
+        except:
+            pass # Ignore if sending fails
+    finally:
+        print("[QueueReader] Exiting task.")
+
+# --- End WebSocket Helper ---
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """Handles the main WebSocket connection for real-time interaction."""
-    global alpaca_instance # Need access to the initialized instance
-    # Per-connection state variables could go here if needed
-    # E.g., is_vad_interrupt_enabled = True
-    # E.g., current_interaction_task: asyncio.Task | None = None
+    global alpaca_instance, current_interaction_task, queue_reader_task, interaction_queue
+
+    client_address = f"{websocket.client.host}:{websocket.client.port}"
+    print(f"WebSocket connection established from {client_address}")
+
+    # --- Simple single-client handling ---
+    # If an interaction is somehow active from a previous connection, try to cancel it.
+    if current_interaction_task and not current_interaction_task.done():
+        print(f"Warning: Cancelling remnant interaction task from previous connection.")
+        current_interaction_task.cancel()
+    if queue_reader_task and not queue_reader_task.done():
+        print(f"Warning: Cancelling remnant queue reader task from previous connection.")
+        queue_reader_task.cancel()
+    current_interaction_task = None
+    queue_reader_task = None
+    interaction_queue = None # Reset queue on new connection
+    # -------------------------------------
 
     await websocket.accept()
-    print("WebSocket connection established.")
-
-    # --- Simplification: Allow only one connection at a time globally ---
-    # In a real app, you'd manage connections and state per client.
-    # For now, we assume one user.
-    # ------------------------------------------------------------------
-
-    # --- Send Initial State (Optional but good practice) ---
-    # await websocket.send_json({
-    #     "type": "status",
-    #     "state": "Idle",
-    #     "vad_interrupt_enabled": True # Default or fetch from config
-    # })
-    # --------------------------------------------------------
-
-    # Task tracking for cancellation on disconnect or stop
-    current_interaction_task: Union[asyncio.Task, None] = None
 
     try:
         while True:
@@ -176,23 +213,101 @@ async def websocket_endpoint(websocket: WebSocket):
 
             action = data.get("action")
 
-            # Check if Alpaca is initialized
             if not alpaca_instance:
                 await websocket.send_json({"type": "error", "message": "Alpaca assistant not initialized.", "state": "Error"})
-                continue # Wait for next message
+                continue
 
             # --- Action Handling ---
             if action == "start":
                 mode = data.get("mode", "voice")
                 print(f"Received 'start' action, mode: {mode}")
-                # TODO: Implement voice start
-                await websocket.send_json({"type": "status", "state": "Starting", "message": f"Starting {mode} mode... (Voice not implemented yet)"})
+
+                if current_interaction_task and not current_interaction_task.done():
+                     await websocket.send_json({"type": "error", "message": "An interaction is already in progress.", "state": "Busy"})
+                     continue
+
+                if mode == "voice":
+                    # --- Start Voice Interaction ---
+                    try:
+                        interaction_queue = Queue()
+
+                        # Start the task to read from the queue and send to websocket
+                        queue_reader_task = asyncio.create_task(
+                            handle_interaction_queue(websocket, interaction_queue),
+                            name=f"QueueReader_{client_address}"
+                        )
+
+                        # Fetch interaction parameters (optional, use defaults or pass via WS)
+                        timeout = alpaca_instance.timeout_arg if hasattr(alpaca_instance, 'timeout_arg') else 10
+                        phrase_limit = alpaca_instance.phrase_limit_arg if hasattr(alpaca_instance, 'phrase_limit_arg') else 10
+                        duration = alpaca_instance.duration_arg if hasattr(alpaca_instance, 'duration_arg') else None
+                        
+                        print(f"Starting voice interaction task (timeout={timeout}, phrase_limit={phrase_limit}, duration={duration})...")
+                        # Start the actual interaction task, passing the queue
+                        current_interaction_task = asyncio.create_task(
+                            alpaca_instance.interaction_handler.run_single_interaction(
+                                status_queue=interaction_queue,
+                                duration=duration,
+                                timeout=timeout,
+                                phrase_limit=phrase_limit
+                            ),
+                            name=f"VoiceInteraction_{client_address}"
+                        )
+
+                        # Optional: Monitor the interaction task completion/failure
+                        # You could add a callback or await it here, but that blocks receive loop.
+                        # The handle_interaction_queue task will exit based on final status messages.
+                        # Consider adding logic to handle task exceptions if needed.
+
+                    except AttributeError as ae:
+                         print(f"Error accessing alpaca instance attributes for voice start: {ae}")
+                         traceback.print_exc()
+                         await websocket.send_json({"type": "error", "message": f"Server configuration error: {ae}", "state": "Error"})
+                         # Clean up queue/tasks if partially created
+                         if queue_reader_task and not queue_reader_task.done(): queue_reader_task.cancel()
+                         if interaction_queue: interaction_queue = None
+                         queue_reader_task = None
+                         current_interaction_task = None
+                    except Exception as e:
+                         print(f"Error starting voice interaction: {e}")
+                         traceback.print_exc()
+                         await websocket.send_json({"type": "error", "message": f"Failed to start interaction: {e}", "state": "Error"})
+                         if queue_reader_task and not queue_reader_task.done(): queue_reader_task.cancel()
+                         if interaction_queue: interaction_queue = None
+                         queue_reader_task = None
+                         current_interaction_task = None
+                    # --- End Start Voice Interaction ---
+
+                elif mode == "text":
+                     # This assumes text interaction is short and doesn't need complex task management
+                     # Re-using existing text logic here
+                     text = data.get("text", "") # Allow text with start action? Or require send_text? Let's assume require send_text.
+                     await websocket.send_json({"type": "info", "message": "Use 'send_text' action for text interactions."})
+                     # If you want start to trigger a text loop, implement similar task logic as voice
+                else:
+                     await websocket.send_json({"type": "error", "message": f"Unsupported start mode: {mode}", "state": "Error"})
+
 
             elif action == "stop":
                 print("Received 'stop' action")
-                # TODO: Cancel the current_interaction_task if it's running
-                # TODO: Send 'Idle' status update
-                await websocket.send_json({"type": "status", "state": "Stopping"})
+                interrupted_by_client = False
+                if current_interaction_task and not current_interaction_task.done():
+                    print("Cancelling interaction task due to 'stop' command.")
+                    current_interaction_task.cancel()
+                    interrupted_by_client = True
+                # Queue reader will stop when it gets the final 'Cancelled' status or disconnects
+                
+                # Reset task variables (they might be None already if task finished quickly)
+                current_interaction_task = None
+                # queue_reader_task cancellation handled by its own logic or disconnect
+
+                # Send status only if we actively cancelled something
+                if interrupted_by_client:
+                    # Optionally send an 'Interrupted' status immediately, though the queue might send 'Cancelled' later
+                     await websocket.send_json({"type": "status", "state": "Interrupted", "message": "Stopped by client."})
+                else:
+                     await websocket.send_json({"type": "status", "state": "Idle", "message": "Stop command received, nothing active to stop."})
+
 
             elif action == "send_text":
                 text = data.get("text")
@@ -201,37 +316,24 @@ async def websocket_endpoint(websocket: WebSocket):
                     continue
 
                 print(f"Received 'send_text': '{text[:50]}...'")
-                await websocket.send_json({"type": "status", "state": "Processing"})
+                
+                if current_interaction_task and not current_interaction_task.done():
+                    await websocket.send_json({"type": "error", "message": "Cannot send text while voice interaction is active.", "state": "Busy"})
+                    continue
 
+                await websocket.send_json({"type": "status", "state": "Processing"})
                 try:
-                    # Ensure interaction_handler exists
                     if not hasattr(alpaca_instance, 'interaction_handler'):
                         raise AttributeError("Alpaca instance lacks an 'interaction_handler'")
-
-                    # Call the async method which returns an async generator
                     response_generator = await alpaca_instance.interaction_handler.run_single_text_interaction(text)
-
                     full_response = ""
-                    # Stream the response back chunk by chunk
-                    # --- Use standard 'for' loop for sync generator, but yield control --- 
-                    for chunk in response_generator: # Use standard 'for'
-                        if chunk: # Ensure chunk is not empty
+                    for chunk in response_generator:
+                        if chunk:
                             full_response += chunk
-                            await websocket.send_json({ # Still await WS send
-                                "type": "llm_chunk",
-                                "text": chunk
-                            })
-                        await asyncio.sleep(0) # Yield control to event loop
-                    # --- End iteration ---
-                    
-                    # Send a final status update once streaming is complete
-                    await websocket.send_json({
-                        "type": "status", 
-                        "state": "Idle", 
-                        "final_response": full_response # Optional: Send full response at the end
-                    }) 
+                            await websocket.send_json({"type": "llm_chunk", "text": chunk})
+                        await asyncio.sleep(0)
+                    await websocket.send_json({"type": "status", "state": "Idle", "final_response": full_response})
                     print("Text interaction streaming complete.")
-                
                 except AttributeError as ae:
                      print(f"Error accessing interaction handler: {ae}")
                      traceback.print_exc()
@@ -240,20 +342,40 @@ async def websocket_endpoint(websocket: WebSocket):
                     print(f"Error during text interaction: {e}")
                     traceback.print_exc()
                     await websocket.send_json({"type": "error", "message": f"Error processing text: {e}", "state": "Error"})
-                    # Optionally revert to Idle state after error
                     await websocket.send_json({"type": "status", "state": "Idle"})
 
 
             elif action == "interrupt":
                 print("Received 'interrupt' action")
-                # TODO: Implement interrupt (mainly for voice)
-                await websocket.send_json({"type": "status", "state": "Interrupted"})
+                # Simple interrupt: just stop server-side audio playback if possible
+                # More complex logic would involve signalling the OutputHandler event
+                interrupted_audio = False
+                if alpaca_instance and hasattr(alpaca_instance, 'component_manager') and alpaca_instance.component_manager.audio_handler:
+                    try:
+                        print("Attempting to stop audio playback...")
+                        # NOTE: stop_playback() might not exist or work depending on AudioHandler implementation
+                        alpaca_instance.component_manager.audio_handler.stop_playback() 
+                        interrupted_audio = True
+                    except AttributeError:
+                         print("Warning: audio_handler has no stop_playback() method.")
+                    except Exception as e:
+                        print(f"Error trying to stop playback on interrupt: {e}")
+                
+                if interrupted_audio:
+                    await websocket.send_json({"type": "status", "state": "Interrupted", "message": "Audio stop requested by client interrupt."})
+                else:
+                    # If voice interaction isn't active, this might not do much
+                    await websocket.send_json({"type": "info", "message": "Interrupt received. Attempted to stop server audio (if applicable)."})
+
 
             elif action == "toggle_vad_interrupt":
+                # TODO: Implement actual VAD toggle logic
+                # This requires state management and potentially modifying OutputHandler/AudioHandler
                 enabled = data.get("enabled", False)
-                print(f"Received 'toggle_vad_interrupt', enabled: {enabled}")
-                # TODO: Implement VAD toggle state management
-                await websocket.send_json({"type": "info", "message": f"VAD Interrupt Toggled: {enabled}"})
+                print(f"Received 'toggle_vad_interrupt', enabled: {enabled} (Logic not fully implemented)")
+                # Example: Store state per connection if managing multiple clients
+                # connection_state['vad_enabled'] = enabled
+                await websocket.send_json({"type": "info", "message": f"VAD Interrupt Toggled: {enabled} (Server logic TBD)"})
 
             else:
                 print(f"Unknown action received: {action}")
@@ -261,10 +383,20 @@ async def websocket_endpoint(websocket: WebSocket):
             # --- End Action Handling ---
 
     except WebSocketDisconnect:
-        print("WebSocket connection closed.")
-        # TODO: Handle disconnection - cancel any running tasks for this client
+        print(f"WebSocket disconnected from {client_address}.")
+        # Clean up tasks associated with this connection
+        if current_interaction_task and not current_interaction_task.done():
+            print("Cancelling interaction task due to disconnect.")
+            current_interaction_task.cancel()
+        if queue_reader_task and not queue_reader_task.done():
+            print("Cancelling queue reader task due to disconnect.")
+            queue_reader_task.cancel()
+        current_interaction_task = None
+        queue_reader_task = None
+        interaction_queue = None
+
     except Exception as e:
-        print(f"Error in WebSocket handler: {e}")
+        print(f"Error in WebSocket handler for {client_address}: {e}")
         traceback.print_exc()
         try:
             await websocket.send_json({"type": "error", "message": f"Server error: {e}", "state": "Error"})
@@ -272,14 +404,23 @@ async def websocket_endpoint(websocket: WebSocket):
         except Exception:
             pass # Ignore if sending/closing fails
     finally:
-        # --- Cleanup for this connection ---
-        print("WebSocket cleanup complete.")
+        # Ensure cleanup if connection closes unexpectedly
+        if current_interaction_task and not current_interaction_task.done(): current_interaction_task.cancel()
+        if queue_reader_task and not queue_reader_task.done(): queue_reader_task.cancel()
+        current_interaction_task = None
+        queue_reader_task = None
+        interaction_queue = None
+        print(f"WebSocket cleanup complete for {client_address}.")
 
 # --- Optional: Add entry point for running with uvicorn ---
-# if __name__ == "__main__":
-#     import uvicorn
-#     print("Starting server with uvicorn...")
-#     # Remember to set PYTHONPATH=. or similar if running directly
-#     # Or run using: uvicorn src.api.server:app --reload --port 8000
-#     uvicorn.run(app, host="0.0.0.0", port=8000)
-# --------------------------------------------------------- 
+if __name__ == "__main__":
+    import uvicorn
+    print("Starting server with uvicorn...")
+    # Remember to set PYTHONPATH=. or similar if running directly
+    # Or run using: uvicorn src.api.server:app --reload --port 8000 --log-level debug
+    # Note: Uvicorn might need host='127.0.0.1' instead of '0.0.0.0' on some systems for localhost tests
+    # Ensure the app object is referenced correctly if running this file directly
+    # uvicorn.run("server:app", ...) should be uvicorn.run(__name__ + ":app", ...) or adjust depending on execution context
+    # Let's make it runnable directly assuming file is run from project root with PYTHONPATH set
+    # Or more robustly: uvicorn src.api.server:app --host 127.0.0.1 --port 8000 --reload --log-level info
+    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info") # Removed reload for direct run 
