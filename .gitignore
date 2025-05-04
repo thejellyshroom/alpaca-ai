@@ -4,7 +4,7 @@ __pycache__/
 *$py.class
 output/
 test/
-test.py
+# test.py
 data/logs/
 examples/
 generated_audio/
