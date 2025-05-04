@@ -19,6 +19,8 @@ class OutputHandler:
     def __init__(self, component_manager: ComponentManager):
         """Initializes the handler with the component manager."""
         self.component_manager = component_manager
+        # Keep track of the current interrupt event if an interaction is active
+        self._current_interrupt_event: Optional[threading.Event] = None 
         print("OutputHandler initialized.")
         
     async def _process_tts_buffer(self, tts_buffer: str, initial_words_spoken: bool, interrupt_event: threading.Event, status_queue: Optional[Queue]) -> tuple[str, bool, bool]:
@@ -106,6 +108,15 @@ class OutputHandler:
         return remaining_buffer, initial_words_spoken, interrupted
     # --- End Helper --- 
 
+    # Add a method to signal the interrupt event externally
+    def interrupt(self):
+        """Signals the current interaction to stop speaking."""
+        if self._current_interrupt_event and not self._current_interrupt_event.is_set():
+            print("[OutputHandler] Interrupt method called. Setting event.")
+            self._current_interrupt_event.set()
+        else:
+            print("[OutputHandler] Interrupt method called, but no active interrupt event to set.")
+
     async def speak(self, response_source, status_queue: Optional[Queue] = None):
         """Convert text response to speech, sending status/audio via queue."""
         tts_handler: Optional[TTSHandler] = self.component_manager.tts_handler
@@ -150,6 +161,7 @@ class OutputHandler:
              return ("ERROR", full_response_text)
 
         interrupt_event = threading.Event() 
+        self._current_interrupt_event = interrupt_event # Store the event for the interrupt() method
         interrupted = False
         full_response_text = ""
         tts_buffer = ""
@@ -249,4 +261,5 @@ class OutputHandler:
                       audio_handler.stop_interrupt_listener()
                  except Exception as e_stop:
                       print(f"Error stopping interrupt listener: {e_stop}")
+            self._current_interrupt_event = None # Clear the event reference
             print("[OutputHandler] Speak method finished.") 

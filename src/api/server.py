@@ -294,17 +294,31 @@ async def websocket_endpoint(websocket: WebSocket):
                 if current_interaction_task and not current_interaction_task.done():
                     print("Cancelling interaction task due to 'stop' command.")
                     current_interaction_task.cancel()
+                    # Wait briefly for cancellation to propagate if needed, though not strictly necessary
+                    # await asyncio.sleep(0.01)
                     interrupted_by_client = True
-                # Queue reader will stop when it gets the final 'Cancelled' status or disconnects
+                else:
+                     print("No active interaction task to stop.")
                 
-                # Reset task variables (they might be None already if task finished quickly)
-                current_interaction_task = None
-                # queue_reader_task cancellation handled by its own logic or disconnect
+                # Queue reader task should exit automatically when it receives the final
+                # status ('Cancelled' or 'Interrupted') from the queue after the main task cancels,
+                # or on WebSocketDisconnect.
+                # We don't need to explicitly cancel queue_reader_task here unless it gets stuck.
 
-                # Send status only if we actively cancelled something
+                # Reset global task/queue variables after cancellation attempt
+                current_interaction_task = None
+                queue_reader_task = None # Let it finish naturally
+                interaction_queue = None # Clear queue reference
+
+                # Send status based on whether we cancelled something
                 if interrupted_by_client:
-                    # Optionally send an 'Interrupted' status immediately, though the queue might send 'Cancelled' later
-                     await websocket.send_json({"type": "status", "state": "Interrupted", "message": "Stopped by client."})
+                    # The interaction task will put 'Cancelled' or 'Interrupted' on the queue,
+                    # which handle_interaction_queue will send.
+                    # Sending an immediate status might be redundant or confusing.
+                    # Let's just confirm the stop was processed.
+                    await websocket.send_json({"type": "info", "message": "Stop command processed. Interaction cancelled."})
+                    # Optional: Send Idle state if confident cancellation worked immediately
+                    # await websocket.send_json({"type": "status", "state": "Idle", "message": "Stopped by client."}) 
                 else:
                      await websocket.send_json({"type": "status", "state": "Idle", "message": "Stop command received, nothing active to stop."})
 
@@ -347,25 +361,28 @@ async def websocket_endpoint(websocket: WebSocket):
 
             elif action == "interrupt":
                 print("Received 'interrupt' action")
-                # Simple interrupt: just stop server-side audio playback if possible
-                # More complex logic would involve signalling the OutputHandler event
-                interrupted_audio = False
-                if alpaca_instance and hasattr(alpaca_instance, 'component_manager') and alpaca_instance.component_manager.audio_handler:
-                    try:
-                        print("Attempting to stop audio playback...")
-                        # NOTE: stop_playback() might not exist or work depending on AudioHandler implementation
-                        alpaca_instance.component_manager.audio_handler.stop_playback() 
-                        interrupted_audio = True
-                    except AttributeError:
-                         print("Warning: audio_handler has no stop_playback() method.")
-                    except Exception as e:
-                        print(f"Error trying to stop playback on interrupt: {e}")
-                
-                if interrupted_audio:
-                    await websocket.send_json({"type": "status", "state": "Interrupted", "message": "Audio stop requested by client interrupt."})
+                interrupted_tts = False
+                # Check if alpaca and handlers exist
+                if alpaca_instance and hasattr(alpaca_instance, 'output_handler'):
+                    output_handler = alpaca_instance.output_handler
+                    if hasattr(output_handler, 'interrupt') and callable(output_handler.interrupt):
+                        try:
+                            print("Calling output_handler.interrupt()...")
+                            output_handler.interrupt() # Call the new method
+                            interrupted_tts = True
+                        except Exception as e:
+                            print(f"Error calling output_handler.interrupt(): {e}")
+                    else:
+                        print("Warning: Output handler does not have an interrupt() method.")
                 else:
-                    # If voice interaction isn't active, this might not do much
-                    await websocket.send_json({"type": "info", "message": "Interrupt received. Attempted to stop server audio (if applicable)."})
+                    print("Warning: Cannot interrupt TTS, Alpaca instance or Output handler missing.")
+
+                # Send confirmation back to client
+                if interrupted_tts:
+                    # The actual status change (Interrupted, Idle) will come via the queue later
+                    await websocket.send_json({"type": "info", "message": "Interrupt signal sent to TTS handler."})
+                else:
+                    await websocket.send_json({"type": "info", "message": "Interrupt received, but TTS handler could not be signalled."})
 
 
             elif action == "toggle_vad_interrupt":

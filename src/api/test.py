@@ -11,6 +11,7 @@ async def test_interaction(mode="text", text_to_send=None):
     audio_buffer = [] # Buffer to store incoming audio chunks
     sample_rate = 16000 # Default sample rate, update if received
     audio_format = 'int16' # Default format based on pcm_s16le
+    playback_interrupted = False # Flag to stop playback on interrupt
 
     print(f"--- Testing {mode.upper()} mode ---")
     if mode == "text" and not text_to_send:
@@ -43,6 +44,23 @@ async def test_interaction(mode="text", text_to_send=None):
             try:
                 while True:
                     response = await websocket.recv()
+                    # --- Check for interrupt *before* processing --- 
+                    if playback_interrupted:
+                        print("< Ignoring message after interrupt.")
+                        # Keep receiving until connection closes or final status is re-confirmed
+                        # Or break here if desired?
+                        # Let's try processing just the final status to break cleanly
+                        try:
+                             data = json.loads(response)
+                             if data.get("type") == "status" and data.get("state") in ["Idle", "Error", "Interrupted", "Cancelled", "Disabled"]:
+                                 print("<- Received final status after interrupt was flagged. Breaking loop.")
+                                 break
+                             else:
+                                 continue # Ignore other messages after interrupt
+                        except:
+                            continue # Ignore non-json after interrupt
+                    # -------------------------------------------------
+
                     print(f"< Received raw: {response[:100]}...") # Print truncated raw response
 
                     try:
@@ -53,6 +71,12 @@ async def test_interaction(mode="text", text_to_send=None):
                         print(f"< Parsed Type: {msg_type}, State: {state}") # Log parsed type/state
 
                         if msg_type == "audio_chunk":
+                            # --- Check interrupt flag before playing --- 
+                            if playback_interrupted:
+                                print("    Skipping audio chunk due to prior interrupt.")
+                                continue
+                            # -----------------------------------------
+                            
                             base64_audio = data.get("data")
                             received_rate = data.get("sample_rate")
                             received_format = data.get("format", "pcm_s16le").lower()
@@ -86,14 +110,25 @@ async def test_interaction(mode="text", text_to_send=None):
                                      print(f"    Error playing audio chunk: {play_e}")
                                      traceback.print_exc()
                         
-                        elif msg_type == "status" and state in ["Idle", "Error", "Interrupted", "Cancelled", "Disabled"]:
-                            print(f"<- Received final state '{state}'. Waiting for audio playback...")
-                            sd.wait() # Wait for any remaining audio to finish playing
-                            print("<- Playback finished. Closing connection.")
-                            break # Exit loop
-                        
-                        # Print other message types like status changes, transcripts etc.
-                        elif msg_type != "audio_chunk": 
+                        elif msg_type == "status":
+                            if state == "Interrupted":
+                                print("<- INTERRUPT received! Stopping playback and ignoring further audio.")
+                                playback_interrupted = True
+                                sd.stop() # Stop current playback immediately
+                                # Don't break yet, wait for final Idle/Error/Cancelled from QueueReader exit
+                            
+                            elif state in ["Idle", "Error", "Cancelled", "Disabled"]:
+                                print(f"<- Received final state '{state}'. Waiting for audio playback...")
+                                sd.wait() # Wait for any audio *already playing* to finish
+                                print("<- Playback finished. Closing connection.")
+                                break # Exit loop
+                            
+                            # Print other status updates
+                            else:
+                                print(f"< Received JSON: {data}") 
+
+                        # Print other message types like transcripts etc.
+                        elif msg_type != "audio_chunk" and msg_type != "status": 
                              print(f"< Received JSON: {data}") 
 
                     except json.JSONDecodeError:
