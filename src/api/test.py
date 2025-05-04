@@ -41,9 +41,12 @@ async def test_interaction(mode="text", text_to_send=None):
             await websocket.send(json.dumps(message_to_send))
 
             print("< Receiving messages...")
+            message_count = 0 # Counter for sending interrupt
+            interrupt_sent = False # Flag to ensure interrupt is sent only once
             try:
                 while True:
                     response = await websocket.recv()
+                    message_count += 1
                     # --- Check for interrupt *before* processing --- 
                     if playback_interrupted:
                         print("< Ignoring message after interrupt.")
@@ -69,6 +72,13 @@ async def test_interaction(mode="text", text_to_send=None):
                         state = data.get("state")
                         
                         print(f"< Parsed Type: {msg_type}, State: {state}") # Log parsed type/state
+
+                        # --- Send Interrupt after a few messages (for testing) ---
+                        if mode == "voice" and not interrupt_sent and message_count >= 3:
+                            print(f"--- Sending INTERRUPT (message count: {message_count}) ---")
+                            await websocket.send(json.dumps({"action": "interrupt"}))
+                            interrupt_sent = True
+                        # ----------------------------------------------------------
 
                         if msg_type == "audio_chunk":
                             # --- Check interrupt flag before playing --- 
