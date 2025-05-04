@@ -54,7 +54,11 @@ class OutputHandler:
                 
                 # Log raw output type and shape/stats if numpy array
                 if isinstance(audio_array, np.ndarray):
-                    print(f"    <--- TTS returned numpy array | dtype: {audio_array.dtype} | shape: {audio_array.shape} | min: {np.min(audio_array):.2f} | max: {np.max(audio_array):.2f} | mean: {np.mean(audio_array):.2f}")
+                    # Check size before calculating stats to avoid error on empty arrays
+                    if audio_array.size > 0:
+                        print(f"    <--- TTS returned numpy array | dtype: {audio_array.dtype} | shape: {audio_array.shape} | min: {np.min(audio_array):.2f} | max: {np.max(audio_array):.2f} | mean: {np.mean(audio_array):.2f}")
+                    else:
+                        print(f"    <--- TTS returned numpy array | dtype: {audio_array.dtype} | shape: {audio_array.shape} (EMPTY ARRAY)")
                 elif isinstance(audio_array, bytes):
                     print(f"    <--- TTS returned bytes | len: {len(audio_array)}")
                 else:
@@ -163,7 +167,9 @@ class OutputHandler:
         full_response_text = ""
         tts_buffer = ""
         initial_words_spoken = False
-        final_status_code = "ERROR"
+        # Initialize final_status_code to COMPLETED, assume success unless specific errors occur
+        final_status_code = "COMPLETED"
+        tts_errors_occurred = False # Flag to track if any TTS chunk failed
         
         try:
             await put_status("Speaking")
@@ -228,28 +234,38 @@ class OutputHandler:
                  except Exception as e: 
                       print(f"\nError synthesizing/queueing final segment: {e}")
                       await put_status("Error", f"TTS Error on final segment: {e}")
-                      final_status_code = "ERROR"
+                      # Don't necessarily mark the whole interaction as ERROR here
+                      # Mark that TTS errors happened instead
+                      tts_errors_occurred = True 
+                      # final_status_code = "ERROR"
 
             if interrupted:
                 print("\n[OutputHandler] Interrupted during generation/TTS.")
                 final_status_code = "INTERRUPTED"
                 await put_status("Interrupted", "Interrupted by user/VAD.")
-            elif final_status_code != "ERROR":
-                 print("\n[OutputHandler] Finished generating response and sending audio chunks.")
-                 final_status_code = "COMPLETED"
-                 await put_status("Idle")
-            else:
-                 print("\n[OutputHandler] Finished generating response but encountered TTS errors.")
-                 await put_status("Idle", "Finished with TTS errors.")
+            # --- Revised Logic: Check for completion status ---
+            elif final_status_code == "COMPLETED": # Check if it wasn't changed by a critical error
+                 if tts_errors_occurred:
+                    print("\n[OutputHandler] Finished generating response with some TTS errors.")
+                    await put_status("Idle", "Finished with TTS errors.")
+                    # Keep final_status_code as COMPLETED, but indicate issues in the message
+                 else:
+                    print("\n[OutputHandler] Finished generating response and sending audio chunks successfully.")
+                    await put_status("Idle") # Default Idle status for full success
+            # If final_status_code was set to ERROR by a critical exception handler above, it will remain ERROR.
             
             return (final_status_code, full_response_text)
 
         except asyncio.CancelledError:
             print("\n[OutputHandler] Speak task cancelled.")
-            raise
+            # Ensure status reflects cancellation if queue is available
+            final_status_code = "CANCELLED" # Use a specific CANCELLED status
+            await put_status("Cancelled", "Speak task cancelled.") 
+            raise # Re-raise to allow higher-level handling
         except Exception as e:
             print(f"\nError in OutputHandler.speak method: {e}")
             traceback.print_exc()
+            final_status_code = "ERROR" # Set to ERROR on critical exceptions
             await put_status("Error", f"OutputHandler Error: {e}")
             return ("ERROR", str(e)) 
         finally:

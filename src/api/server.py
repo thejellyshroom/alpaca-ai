@@ -162,8 +162,8 @@ async def handle_interaction_queue(websocket: WebSocket, queue: Queue):
             message = await queue.get()
             await websocket.send_json(message)
             queue.task_done()
-            # If the message indicates the end of interaction (e.g., Idle, Error, Interrupted, Cancelled), stop reading
-            if message.get("type") == "status" and message.get("state") in ["Idle", "Error", "Interrupted", "Cancelled", "Disabled"]:
+            # If the message indicates the end of interaction (e.g., Idle, Error, Interrupted, Cancelled, Disabled), stop reading
+            if message.get("type") == "status" and message.get("state") in ["Error", "Cancelled", "Disabled"]:
                  print(f"[QueueReader] Received final state '{message.get('state')}'. Exiting.")
                  break
     except asyncio.CancelledError:
@@ -245,13 +245,13 @@ async def websocket_endpoint(websocket: WebSocket):
                         print(f"Starting voice interaction task (timeout={timeout}, phrase_limit={phrase_limit}, duration={duration})...")
                         # Start the actual interaction task, passing the queue
                         current_interaction_task = asyncio.create_task(
-                            alpaca_instance.interaction_handler.run_single_interaction(
+                            alpaca_instance.interaction_handler.run_voice_interaction_loop(
                                 status_queue=interaction_queue,
                                 duration=duration,
                                 timeout=timeout,
                                 phrase_limit=phrase_limit
                             ),
-                            name=f"VoiceInteraction_{client_address}"
+                            name=f"VoiceInteractionLoop_{client_address}"
                         )
 
                         # Optional: Monitor the interaction task completion/failure

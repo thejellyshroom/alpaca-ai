@@ -188,6 +188,87 @@ class AlpacaInteraction:
             if audio_handler: audio_handler.stop_playback()
             return "ERROR", str(e) 
 
+    async def run_voice_interaction_loop(self, 
+                                         status_queue: asyncio.Queue,
+                                         duration=None, 
+                                         timeout=10, 
+                                         phrase_limit=10):
+        """Runs continuous listen -> process -> speak cycles until cancelled."""
+        audio_handler = self.component_manager.audio_handler
+        print("Starting continuous voice interaction loop...")
+        
+        # Helper function to send status updates (copied from single interaction)
+        async def put_status(state: str, message: str = None, **kwargs):
+            if status_queue:
+                payload = {"type": "status", "state": state}
+                if message: payload["message"] = message
+                payload.update(kwargs)
+                await status_queue.put(payload)
+            else:
+                print(f"[Loop Status] {state} {f'({message})' if message else ''}")
+
+        try:
+            while True: # Loop indefinitely until cancelled
+                print("--- Starting new interaction cycle in loop ---")
+                # Run a single interaction cycle
+                interaction_status, _ = await self.run_single_interaction(
+                    duration=duration,
+                    timeout=timeout,
+                    phrase_limit=phrase_limit,
+                    status_queue=status_queue
+                )
+                
+                print(f"--- Interaction cycle finished with status: {interaction_status} ---")
+                
+                # Check status from the single interaction
+                if interaction_status == "Cancelled": # Explicitly cancelled by internal logic?
+                     print("Loop: Single interaction returned Cancelled status. Exiting loop.")
+                     await put_status("Cancelled", "Interaction cancelled internally.")
+                     break
+                elif interaction_status == "ERROR":
+                     print("Loop: Single interaction returned Error status. Exiting loop.")
+                     # Error status should have been sent by run_single_interaction already
+                     await put_status("Error", "Loop terminating due to error in interaction.")
+                     break
+                elif interaction_status == "DISABLED":
+                    print("Loop: TTS is disabled. Exiting loop.")
+                    await put_status("Disabled", "Loop terminating because TTS is disabled.")
+                    break
+                # If COMPLETED, INTERRUPTED, TIMEOUT_ERROR, low_energy, etc., just continue the loop
+                else:
+                    # Optionally send an 'Idle' or 'Waiting' status before looping back to Listening
+                    # The run_single_interaction already sends 'Idle' after 'Speaking' completes
+                    # or 'Error' if listening failed. This might be redundant unless we 
+                    # want a specific 'Looping' status.
+                    # Let's rely on the 'Listening' status from the *next* cycle start.
+                    print("Loop: Interaction finished, looping back to listen...")
+                    await asyncio.sleep(0.1) # Small delay before next cycle
+                
+                # Check for cancellation request between cycles
+                await asyncio.sleep(0) # Yield control to allow cancellation check
+
+        except asyncio.CancelledError:
+             print("[Interaction Loop] Loop task cancelled.")
+             await put_status("Cancelled", "Interaction loop was cancelled by external request.")
+             if audio_handler: audio_handler.stop_playback()
+             # No need to re-raise here, the cancellation is handled.
+        except Exception as e:
+            print(f"\nCritical error in interaction loop: {e}")
+            traceback.print_exc()
+            await put_status("Error", f"Critical loop error: {e}")
+            if audio_handler: audio_handler.stop_playback()
+        finally:
+             print("[Interaction Loop] Exiting loop.")
+             # Final cleanup if needed (e.g., ensure audio stopped)
+             if audio_handler: 
+                  try:
+                     audio_handler.stop_playback()
+                     # Optionally stop interrupt listener if managed here
+                     if hasattr(audio_handler, 'stop_interrupt_listener'):
+                          audio_handler.stop_interrupt_listener()
+                  except Exception as stop_e:
+                       print(f"Error during loop final cleanup: {stop_e}")
+
     # Make this async as it calls the async _process_and_respond
     async def run_single_text_interaction(self, user_text: str):
         """Processes text input and returns an async generator for the response stream."""
