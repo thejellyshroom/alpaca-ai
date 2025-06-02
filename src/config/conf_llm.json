@@ -14,5 +14,8 @@
             "top_k": 60,
             "max_tokens": 2048
         }
+    },
+    "gpu": {
+        "n_gpu_layers": 100
     }
 }

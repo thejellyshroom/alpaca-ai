@@ -35,3 +35,4 @@ torchvision==0.21.0
 
 # Utilities
 pipmaster==0.5.4 # Used by minirag for checks, maybe remove if installations are manual 
+aiofiles

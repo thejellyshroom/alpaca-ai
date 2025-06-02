@@ -33,5 +33,9 @@
       "dynamic_energy_adjustment_damping": 0.15,
       "dynamic_energy_ratio": 1.5
     }
+  },
+  "gpu": {
+    "device": "cuda",
+    "compute_type": "float16"
   }
 }

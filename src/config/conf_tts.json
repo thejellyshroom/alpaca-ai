@@ -16,5 +16,8 @@
       "variability": 0.2,
       "sentence_silence": 0.0
     }
+  },
+  "gpu": {
+    "device": "cuda"
   }
 }
