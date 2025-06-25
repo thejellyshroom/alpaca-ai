@@ -1,0 +1,49 @@
+WORKING_DIR="./data/Jellyshroom"
+DATA_PATH="./data/dataset/"
+CONFIG_DIR="./src/config"
+
+# --- Mode Control ---
+DEFAULT_MODE=voice
+ENABLE_INTERRUPTIONS=true
+
+# --- RAG Model Configuration (Used by RAG components) ---
+EMBEDDING_MODEL="sentence-transformers/all-MiniLM-L6-v2"
+EXTRACTION_LLM_MODEL="gemma3:12b"
+
+# --- Assistant Preset Configuration ---
+ASR_PRESET="default"
+TTS_PRESET="default"
+LLM_PRESET="default"
+
+# --- Assistant Component Overrides ---
+ASR_MODEL="Systran/faster-whisper-small"
+TTS_MODEL="hexgrad/Kokoro-82M"
+QUERY_LLM_MODEL="gemma3:4b"
+SYSTEM_PROMPT="You are a helpful AI that is excited to help the user with their questions."
+
+# --- RAG Control ---
+ENABLE_RAG=true
+CONTEXT_LENGTH=2000
+
+# --- Specific ASR Parameter Overrides ---
+ASR_DEVICE="cpu" # ("cpu", "cuda")
+ASR_COMPUTE_TYPE="int8" # ("int8", "float16")
+ASR_ENERGY_THRESHOLD=30
+ASR_MAX_RETRIES=2
+ASR_TIMEOUT=5
+
+# --- Specific TTS Parameter Overrides (Kokoro) ---
+TTS_DEVICE="cuda"
+TTS_VOICE="af_heart"
+TTS_SPEED=1.35
+TTS_EXPRESSIVENESS=1.0
+TTS_VARIABILITY=0.3
+
+# --- Assistant Behavior Parameters ---
+# FIXED_DURATION= # Use fixed duration recording (in seconds) instead of dynamic VAD. Leave empty or comment out for dynamic.
+TIMEOUT=5
+PHRASE_LIMIT=10
+
+# --- RAG Settings (Used by RAG components) ---
+LLM_MAX_TOKEN_SIZE=200
+LLM_MAX_ASYNC=1 

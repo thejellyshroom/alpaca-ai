@@ -1,0 +1,88 @@
+# Comments are provided throughout this file to help you get started.
+# If you need more help, visit the Docker Compose reference guide at
+# https://docs.docker.com/go/compose-spec-reference/
+
+# Here the instructions define your application as a service called "server".
+# This service is built from the Dockerfile in the current directory.
+# You can add other services your application may depend on here, such as a
+# database or a cache. For examples, see the Awesome Compose repository:
+# https://github.com/docker/awesome-compose
+services:
+  server:
+    build:
+      context: .
+    ports:
+      - 8000:8000
+    volumes:
+      - model-cache:/home/appuser/.cache
+      - ./data:/app/data
+    environment:
+      - WORKING_DIR=./data/Jellyshroom
+      - DATA_PATH=./data/dataset/
+      - CONFIG_DIR=./src/config
+      - DEFAULT_MODE=voice
+      - ENABLE_INTERRUPTIONS=true
+      - EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+      - EXTRACTION_LLM_MODEL=gemma3:4b
+      - ASR_PRESET=default
+      - TTS_PRESET=default
+      - LLM_PRESET=default
+      - ASR_MODEL=Systran/faster-whisper-small
+      - TTS_MODEL=hexgrad/Kokoro-82M
+      - QUERY_LLM_MODEL=gemma3:4b
+      - SYSTEM_PROMPT=You are a helpful AI that is excited to help the user with their questions.
+      - ENABLE_RAG=true
+      - CONTEXT_LENGTH=2000
+      - ASR_DEVICE=cpu
+      - ASR_COMPUTE_TYPE=int8
+      - ASR_ENERGY_THRESHOLD=30
+      - ASR_MAX_RETRIES=2
+      - ASR_TIMEOUT=5
+      - TTS_DEVICE=cpu
+      - TTS_VOICE=af_heart
+      - TTS_SPEED=1.35
+      - TTS_EXPRESSIVENESS=1.0
+      - TTS_VARIABILITY=0.3
+      - FIXED_DURATION=
+      - TIMEOUT=5
+      - PHRASE_LIMIT=10
+      - LLM_MAX_TOKEN_SIZE=200
+      - LLM_MAX_ASYNC=1 
+
+volumes:
+  model-cache:
+    # This volume persists downloaded models between container restarts
+
+# The commented out section below is an example of how to define a PostgreSQL
+# database that your application can use. `depends_on` tells Docker Compose to
+# start the database before your application. The `db-data` volume persists the
+# database data between container restarts. The `db-password` secret is used
+# to set the database password. You must create `db/password.txt` and add
+# a password of your choosing to it before running `docker compose up`.
+#     depends_on:
+#       db:
+#         condition: service_healthy
+#   db:
+#     image: postgres
+#     restart: always
+#     user: postgres
+#     secrets:
+#       - db-password
+#     volumes:
+#       - db-data:/var/lib/postgresql/data
+#     environment:
+#       - POSTGRES_DB=example
+#       - POSTGRES_PASSWORD_FILE=/run/secrets/db-password
+#     expose:
+#       - 5432
+#     healthcheck:
+#       test: [ "CMD", "pg_isready" ]
+#       interval: 10s
+#       timeout: 5s
+#       retries: 5
+# volumes:
+#   db-data:
+# secrets:
+#   db-password:
+#     file: db/password.txt
+

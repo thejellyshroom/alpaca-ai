@@ -33,6 +33,13 @@ torchaudio==2.6.0
 torchvision==0.21.0
 # Ensure torch versions are compatible!
 
+# API Server
+uvicorn
+fastapi
+rouge
+openai
+nano-vectordb
+
 # Utilities
 pipmaster==0.5.4 # Used by minirag for checks, maybe remove if installations are manual 
 aiofiles
