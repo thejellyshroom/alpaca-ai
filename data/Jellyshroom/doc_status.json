@@ -1,0 +1,46 @@
+{
+    "./data/dataset/summaries/summary_20250419_215424.txt": {
+        "status": "processed",
+        "timestamp": "2025-04-19 22:19:26.246877"
+    },
+    "./data/dataset/summaries/summary_20250419_223839.txt": {
+        "status": "processed",
+        "timestamp": "2025-04-19 22:45:23.134751"
+    },
+    "./data/dataset/summaries/summary_20250419_224752.txt": {
+        "status": "processed",
+        "timestamp": "2025-04-19 23:06:06.103788"
+    },
+    "./data/dataset/summaries/summary_20250419_234851.txt": {
+        "status": "processed",
+        "timestamp": "2025-04-19 23:55:10.429588"
+    },
+    "./data/dataset/summaries/summary_20250420_013634.txt": {
+        "status": "processed",
+        "timestamp": "2025-04-20 01:44:11.515789"
+    },
+    "./data/dataset/summaries/summary_20250420_014049.txt": {
+        "status": "processed",
+        "timestamp": "2025-04-20 01:45:58.460490"
+    },
+    "./data/dataset/summaries/summary_20250422_002955.txt": {
+        "status": "processed",
+        "timestamp": "2025-04-22 00:37:45.073543"
+    },
+    "./data/dataset/summaries/summary_20250422_015119.txt": {
+        "status": "processed",
+        "timestamp": "2025-04-22 11:53:21.901768"
+    },
+    "./data/dataset/summaries/summary_20250422_171918.txt": {
+        "status": "processed",
+        "timestamp": "2025-04-22 17:24:17.268263"
+    },
+    "./data/dataset/summaries/summary_20250422_174812.txt": {
+        "status": "processed",
+        "timestamp": "2025-04-29 12:52:13.967466"
+    },
+    "./data/dataset/summaries/summary_20250806_183614.txt": {
+        "status": "processed",
+        "timestamp": "2025-08-06 18:37:59.106081"
+    }
+}
