@@ -1,4 +1,4 @@
-# Core
+# Core Dependencies
 python-dotenv==1.0.1
 
 # LLM & RAG
@@ -9,22 +9,20 @@ nltk==3.8.1 # For text processing in minirag
 rouge-score==0.1.2 # For text processing in minirag
 json_repair==0.41.1 # Used by minirag
 tenacity==8.5.0 # Used by minirag
-# networkx==3.2.1 # Optional: Add if using NetworkX graph storage in minirag
 
 # ASR (Speech-to-Text)
 faster-whisper==1.1.1
-SpeechRecognition==3.14.1 # Often used as a fallback or alternative
+SpeechRecognition==3.14.1 # Fallback or alternative
 
 # TTS (Text-to-Speech)
-# Add specific TTS library dependencies here (e.g., google-cloud-texttospeech, TTS, etc.)
 kokoro==0.7.16
 
 # Audio Handling & VAD
-pyaudio==0.2.14 # Or portaudio, check system requirements
+pyaudio==0.2.14
 sounddevice==0.5.1
 soundfile==0.13.1
 silero-vad==5.1.2
-onnxruntime==1.19.2 # Dependency for silero-vad
+onnxruntime==1.19.2 # For silero-vad
 
 # ML/Numerical
 numpy==1.26.4
@@ -33,5 +31,41 @@ torchaudio==2.6.0
 torchvision==0.21.0
 # Ensure torch versions are compatible!
 
+# Database & Storage
+neo4j==5.15.0 # For Neo4j graph database
+redis==5.0.1 # For Redis storage
+pymongo==4.6.1 # For MongoDB storage
+chromadb==0.4.22 # For Chroma vector database
+pymilvus==2.3.4 # For Milvus vector database
+nano-vectordb==0.1.0 # For NanoVectorDB storage
+oracledb==1.4.1 # For Oracle database
+psycopg[binary,pool]==3.1.18 # For PostgreSQL
+asyncpg==0.29.0 # For async PostgreSQL
+aiofiles==23.2.1 # For async file operations
+
+# Graph & Network
+networkx==3.2.1 # For graph operations
+pyvis==0.3.2 # For graph visualization
+gremlinpython==3.7.0 # For Gremlin graph database
+graspologic==3.1.0 # For graph embeddings
+
+# Web Framework & API
+fastapi==0.104.1 # For API server
+uvicorn==0.24.0 # ASGI server for FastAPI
+pydantic==2.5.0 # For data validation
+starlette==0.27.0 # For FastAPI dependencies
+
+# HTTP & Networking
+httpx==0.25.2 # For HTTP requests
+aiohttp==3.9.1 # For async HTTP requests
+
+# File Processing
+PyPDF2==3.0.1 # For PDF processing
+python-docx==1.1.0 # For Word document processing
+python-pptx==0.6.23 # For PowerPoint processing
+
 # Utilities
-pipmaster==0.5.4 # Used by minirag for checks, maybe remove if installations are manual 
+pipmaster==0.5.4 # For dynamic package installation
+tqdm==4.66.1 # For progress bars
+ascii-colors==1.0.0 # For colored terminal output
+configparser==6.0.0 # For configuration file parsing
